@@ -21,7 +21,7 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if err := db.AutoMigrate(&models.Stock{}); err != nil {
+	if err := db.AutoMigrate(&models.Stock{}, &models.DailyPrice{}); err != nil {
 		return nil, err
 	}
 

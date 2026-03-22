@@ -36,6 +36,17 @@ func (h *StockHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, stock)
 }
 
+// GetBySymbol  GET /api/stocks/:symbol  依股票代號查詢
+func (h *StockHandler) GetBySymbol(c *gin.Context) {
+	symbol := c.Param("symbol")
+	var stock models.Stock
+	if err := h.db.Where("symbol = ?", symbol).First(&stock).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "stock not found"})
+		return
+	}
+	c.JSON(http.StatusOK, stock)
+}
+
 func (h *StockHandler) Create(c *gin.Context) {
 	var stock models.Stock
 	if err := c.ShouldBindJSON(&stock); err != nil {

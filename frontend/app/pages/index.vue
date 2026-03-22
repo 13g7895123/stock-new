@@ -24,13 +24,15 @@ const { data: stocks, status, refresh } = await useFetch<Stock[]>('/api/stocks')
 
 const syncing = ref(false)
 const syncState = ref<SyncState | null>(null)
+const syncLabel = ref('')
 
-function syncStocks() {
+function startSSE(url: string, label: string) {
   if (syncing.value) return
   syncing.value = true
   syncState.value = null
+  syncLabel.value = label
 
-  const es = new EventSource('/api/scraper/stocks')
+  const es = new EventSource(url)
 
   es.onmessage = async (e) => {
     const data: SyncState = JSON.parse(e.data)
@@ -51,15 +53,46 @@ function syncStocks() {
     syncing.value = false
     if (!syncState.value || syncState.value.stage !== 'done') {
       syncState.value = {
-        stage: 'error',
-        message: '',
-        progress: 0,
-        url: '',
-        total: 0,
-        synced: 0,
+        stage: 'error', message: '', progress: 0, url: '', total: 0, synced: 0,
         error: '連線失敗，請確認後端服務是否正常',
       }
     }
+  }
+}
+
+function syncStocks() {
+  startSSE('/api/scraper/stocks', '同步股票清單')
+}
+
+function syncPrices() {
+  startSSE('/api/scraper/prices', '同步日K')
+}
+
+// 下方舊的 syncStocks 函式保留為空（由 startSSE 取代）
+function _legacySync() {}
+
+// 搜尋過濾
+const searchQuery = ref('')
+const filteredStocks = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q || !stocks.value) return stocks.value ?? []
+  return stocks.value.filter(s =>
+    s.symbol.toLowerCase().includes(q) ||
+    s.name.toLowerCase().includes(q)
+  )
+})
+
+// 快速跳轉：輸入代號後按 Enter
+const router = useRouter()
+function onSearchEnter() {
+  const q = searchQuery.value.trim()
+  if (!q) return
+  // 如果只有一個精確符合的結果，直接跳轉
+  const exact = stocks.value?.find(s => s.symbol === q.toUpperCase())
+  if (exact) {
+    router.push(`/stocks/${exact.symbol}`)
+  } else if (filteredStocks.value.length === 1) {
+    router.push(`/stocks/${filteredStocks.value[0]!.symbol}`)
   }
 }
 </script>
@@ -70,8 +103,18 @@ function syncStocks() {
       <h1>台灣股票列表</h1>
       <div class="toolbar">
         <span class="count">共 {{ stocks?.length ?? 0 }} 支股票</span>
+        <input
+          v-model="searchQuery"
+          class="search-input"
+          type="text"
+          placeholder="搜尋代號或名稱，按 Enter 跳轉"
+          @keyup.enter="onSearchEnter"
+        />
         <button :disabled="syncing" class="sync-btn" @click="syncStocks">
-          {{ syncing ? '同步中...' : '同步最新清單' }}
+          {{ syncing && syncLabel === '同步股票清單' ? '同步中...' : '同步最新清單' }}
+        </button>
+        <button :disabled="syncing" class="sync-btn prices-btn" @click="syncPrices">
+          {{ syncing && syncLabel === '同步日K' ? '同步中...' : '同步日K' }}
         </button>
       </div>
 
@@ -101,7 +144,7 @@ function syncStocks() {
 
     <div v-if="status === 'pending'" class="loading">載入中...</div>
 
-    <table v-else-if="stocks && stocks.length > 0">
+    <table v-else-if="filteredStocks.length > 0">
       <thead>
         <tr>
           <th>代號</th>
@@ -110,11 +153,12 @@ function syncStocks() {
           <th>漲跌</th>
           <th>漲跌幅</th>
           <th>成交量</th>
+          <th style="text-align:center">K線</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="stock in stocks" :key="stock.id">
-          <td class="symbol">{{ stock.symbol }}</td>
+        <tr v-for="stock in filteredStocks" :key="stock.id">
+          <td class="symbol"><NuxtLink :to="`/stocks/${stock.symbol}`">{{ stock.symbol }}</NuxtLink></td>
           <td>{{ stock.name }}</td>
           <td>{{ stock.price > 0 ? stock.price.toFixed(2) : '-' }}</td>
           <td :class="stock.change > 0 ? 'up' : stock.change < 0 ? 'down' : ''">
@@ -124,6 +168,9 @@ function syncStocks() {
             {{ stock.price > 0 ? (stock.change_pct > 0 ? '+' : '') + stock.change_pct.toFixed(2) + '%' : '-' }}
           </td>
           <td>{{ stock.volume > 0 ? stock.volume.toLocaleString() : '-' }}</td>
+          <td style="text-align:center">
+            <NuxtLink :to="`/stocks/${stock.symbol}`" class="chart-btn">K線圖</NuxtLink>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -318,7 +365,59 @@ tr:hover td {
   color: #dc2626;
 }
 
-.down {
-  color: #16a34a;
+.prices-btn {
+  background: #059669;
+}
+
+.prices-btn:hover:not(:disabled) {
+  background: #047857;
+}
+
+.search-input {
+  flex: 1;
+  max-width: 280px;
+  padding: 7px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  color: #334155;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.search-input:focus {
+  border-color: #2563eb;
+}
+
+.search-input::placeholder {
+  color: #94a3b8;
+}
+
+.symbol a {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.symbol a:hover {
+  text-decoration: underline;
+}
+
+.chart-btn {
+  display: inline-block;
+  padding: 3px 10px;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  font-size: 0.78rem;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+
+.chart-btn:hover {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
 }
 </style>

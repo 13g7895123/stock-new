@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"stock-backend/internal/models"
 	"stock-backend/internal/scraper"
@@ -121,4 +122,109 @@ func (h *ScraperHandler) SyncStocksSSE(c *gin.Context) {
 		Progress: 100,
 		Synced:   len(stocks),
 	})
+}
+
+// SyncPricesSSE godoc
+// GET /api/scraper/prices?date=2025-03-21
+// 不傳 date 則使用最近的交易日（今天或上一個工作日）
+func (h *ScraperHandler) SyncPricesSSE(c *gin.Context) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	// 決定資料日期
+	tradingDate := latestTradingDay()
+	if d := c.Query("date"); d != "" {
+		if t, err := time.Parse("2006-01-02", d); err == nil {
+			tradingDate = t
+		}
+	}
+	dateStr := tradingDate.Format("2006-01-02")
+
+	// --- TWSE ---
+	writeSSE(c, sseEvent{
+		Stage:    "fetching_twse",
+		Message:  fmt.Sprintf("正在抓取上市日K（%s）...", dateStr),
+		Progress: 10,
+		URL:      scraper.TWSEDayAllURL,
+	})
+
+	listedPrices, err := scraper.FetchTWSEDayAll(tradingDate)
+	if err != nil {
+		writeSSE(c, sseEvent{Stage: "error", Error: fmt.Sprintf("上市日K 抓取失敗：%s", err.Error()), Progress: 10})
+		return
+	}
+
+	writeSSE(c, sseEvent{
+		Stage:    "fetched_twse",
+		Message:  fmt.Sprintf("上市取得 %d 筆", len(listedPrices)),
+		Progress: 40,
+		Total:    len(listedPrices),
+		URL:      scraper.TWSEDayAllURL,
+	})
+
+	// --- TPEX ---
+	writeSSE(c, sseEvent{
+		Stage:    "fetching_tpex",
+		Message:  fmt.Sprintf("正在抓取上櫃日K（%s）...", dateStr),
+		Progress: 50,
+		URL:      scraper.TPEXOtcURL,
+	})
+
+	otcPrices, err := scraper.FetchTPEXDayAll(tradingDate)
+	if err != nil {
+		writeSSE(c, sseEvent{Stage: "error", Error: fmt.Sprintf("上櫃日K 抓取失敗：%s", err.Error()), Progress: 50})
+		return
+	}
+
+	writeSSE(c, sseEvent{
+		Stage:    "fetched_tpex",
+		Message:  fmt.Sprintf("上櫃取得 %d 筆", len(otcPrices)),
+		Progress: 70,
+		Total:    len(otcPrices),
+		URL:      scraper.TPEXOtcURL,
+	})
+
+	// --- 寫入 DB（UPSERT by symbol+date）---
+	all := append(listedPrices, otcPrices...)
+	writeSSE(c, sseEvent{
+		Stage:    "saving",
+		Message:  fmt.Sprintf("合計 %d 筆，寫入資料庫...", len(all)),
+		Progress: 80,
+		Synced:   len(all),
+	})
+
+	if len(all) > 0 {
+		result := h.db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "symbol"}, {Name: "date"}},
+			DoUpdates: clause.AssignmentColumns([]string{"open", "high", "low", "close", "volume", "tx_value", "tx_count"}),
+		}).CreateInBatches(&all, 500)
+
+		if result.Error != nil {
+			writeSSE(c, sseEvent{Stage: "error", Error: result.Error.Error(), Progress: 80})
+			return
+		}
+	}
+
+	writeSSE(c, sseEvent{
+		Stage:    "done",
+		Message:  fmt.Sprintf("日K 同步完成！%s 上市 %d 筆 + 上櫃 %d 筆", dateStr, len(listedPrices), len(otcPrices)),
+		Progress: 100,
+		Synced:   len(all),
+	})
+}
+
+// latestTradingDay 回傳最近的交易日（跳過週末）
+func latestTradingDay() time.Time {
+	now := time.Now().In(time.FixedZone("CST", 8*3600))
+	// 若目前時間在 15:00 前，資料可能尚未更新，用前一個交易日
+	if now.Hour() < 15 {
+		now = now.AddDate(0, 0, -1)
+	}
+	// 跳過週末
+	for now.Weekday() == time.Saturday || now.Weekday() == time.Sunday {
+		now = now.AddDate(0, 0, -1)
+	}
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 }
