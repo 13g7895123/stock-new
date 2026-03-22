@@ -99,10 +99,10 @@ func (h *ScraperHandler) SyncStocksSSE(c *gin.Context) {
 	}
 
 	writeSSE(c, sseEvent{
-		Stage:   "saving",
-		Message: fmt.Sprintf("合計 %d 支（上市 %d + 上櫃 %d），寫入資料庫中...", len(stocks), len(listed), len(otc)),
+		Stage:    "saving",
+		Message:  fmt.Sprintf("合計 %d 支（上市 %d + 上櫃 %d），寫入資料庫中...", len(stocks), len(listed), len(otc)),
 		Progress: 85,
-		Synced:  len(stocks),
+		Synced:   len(stocks),
 	})
 
 	result := h.db.Clauses(clause.OnConflict{
@@ -116,9 +116,9 @@ func (h *ScraperHandler) SyncStocksSSE(c *gin.Context) {
 	}
 
 	writeSSE(c, sseEvent{
-		Stage:   "done",
-		Message: fmt.Sprintf("同步完成！上市 %d 支 + 上櫃 %d 支，共 %d 支股票", len(listed), len(otc), len(stocks)),
+		Stage:    "done",
+		Message:  fmt.Sprintf("同步完成！上市 %d 支 + 上櫃 %d 支，共 %d 支股票", len(listed), len(otc), len(stocks)),
 		Progress: 100,
-		Synced:  len(stocks),
+		Synced:   len(stocks),
 	})
 }
