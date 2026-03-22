@@ -1,0 +1,22 @@
+# Node / Bun
+node_modules/
+.nuxt/
+.output/
+dist/
+
+# Go
+backend/tmp/
+backend/*.exe
+backend/server
+
+# Environment
+.env
+*.local
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+*.swp
+*.swo
