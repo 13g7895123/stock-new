@@ -1,4 +1,4 @@
-name: CI — Lint & Build
+name: CI/CD — Lint, Build & Deploy
 
 on:
   push:
@@ -10,6 +10,20 @@ on:
       - main
       - "feat/**"
       - "fix/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "部署環境"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - development
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ─────────────────────────────────────────────
@@ -93,3 +107,64 @@ jobs:
       - name: Build images (no push)
         working-directory: docker
         run: docker compose build
+
+  # ─────────────────────────────────────────────
+  # Deploy: 只在 master/main push 或手動觸發時執行
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Deploy (${{ inputs.environment || 'production' }})
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, docker-build]
+    environment: ${{ inputs.environment || 'production' }}
+    # PR 不部署；只有 master/main push 或 workflow_dispatch 才部署
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'))
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            set -euo pipefail
+
+            echo "── 進入專案目錄 ──"
+            cd ${{ secrets.DEPLOY_PATH }}
+
+            echo "── 拉取最新程式碼 ──"
+            git fetch --all
+            git reset --hard origin/${{ github.ref_name }}
+
+            echo "── 確認環境設定檔存在 ──"
+            ENV="${{ inputs.environment || 'production' }}"
+            if [[ ! -f "docker/envs/.env.${ENV}" ]]; then
+              echo "❌ 找不到 docker/envs/.env.${ENV}"
+              echo "   請在伺服器上建立此檔案"
+              exit 1
+            fi
+
+            echo "── 執行 deploy.sh ──"
+            bash scripts/deploy.sh "${ENV}"
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ 部署成功！"
+          echo "  Branch: ${{ github.ref_name }}"
+          echo "  Commit: ${{ github.sha }}"
+          echo "  環境: ${{ inputs.environment || 'production' }}"
+
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "❌ 部署失敗！"
+          echo "  Branch: ${{ github.ref_name }}"
+          echo "  Commit: ${{ github.sha }}"
