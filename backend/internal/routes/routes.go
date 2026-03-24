@@ -68,6 +68,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 		{
 			scraperGroup.GET("/stocks", scraperHandler.SyncStocksSSE)
 			scraperGroup.GET("/prices", scraperHandler.SyncPricesSSE)
+			scraperGroup.GET("/prices/stock/:symbol", scraperHandler.RefreshStockSSE)
 		}
 
 		chips := api.Group("/chips")

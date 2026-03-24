@@ -289,6 +289,52 @@ const avgVolume = computed(() => {
   const avg = prices.value.reduce((a, p) => a + p.volume / 1000, 0) / prices.value.length
   return Math.round(avg).toLocaleString()
 })
+
+// ── 單檔刷新（SSE）────────────────────────
+type RefreshStage = 'idle' | 'running' | 'done' | 'error'
+const refreshStage   = ref<RefreshStage>('idle')
+const refreshMsg     = ref('')
+const refreshProgress = ref(0)
+let   refreshEs: EventSource | null = null
+
+function startRefresh() {
+  if (refreshStage.value === 'running') return
+  refreshStage.value    = 'running'
+  refreshMsg.value      = '連接中...'
+  refreshProgress.value = 0
+
+  refreshEs = new EventSource(`/api/scraper/prices/stock/${symbol}`)
+
+  refreshEs.onmessage = (e) => {
+    try {
+      const ev = JSON.parse(e.data) as {
+        stage: string; message?: string; progress: number; error?: string; synced?: number
+      }
+      refreshProgress.value = ev.progress
+      if (ev.stage === 'error') {
+        refreshStage.value = 'error'
+        refreshMsg.value   = ev.error || '發生錯誤'
+        refreshEs?.close()
+      } else if (ev.stage === 'done') {
+        refreshStage.value = 'done'
+        refreshMsg.value   = ev.message ?? '更新完成'
+        refreshEs?.close()
+        // 重新載入圖表資料
+        refreshPrices()
+        // 3 秒後恢復 idle
+        setTimeout(() => { refreshStage.value = 'idle'; refreshMsg.value = '' }, 3000)
+      } else {
+        refreshMsg.value = ev.message ?? ''
+      }
+    } catch {}
+  }
+
+  refreshEs.onerror = () => {
+    refreshStage.value = 'error'
+    refreshMsg.value   = '連線中斷，請重試'
+    refreshEs?.close()
+  }
+}
 </script>
 
 <template>
@@ -402,16 +448,43 @@ const avgVolume = computed(() => {
           <p class="hero-eyebrow">{{ symbol }}</p>
           <h1 class="hero-name">{{ stock?.name ?? symbol }}</h1>
         </div>
-        <div v-if="latest" class="hero-price">
-          <span class="price-num" :class="priceChange && priceChange.diff >= 0 ? 'col-up' : 'col-dn'">
-            {{ latest.close.toFixed(2) }}
-          </span>
-          <div v-if="priceChange" class="price-delta" :class="priceChange.diff >= 0 ? 'col-up' : 'col-dn'">
-            <span>{{ priceChange.diff >= 0 ? '+' : '' }}{{ priceChange.diff.toFixed(2) }}</span>
-            <span>{{ priceChange.diff >= 0 ? '+' : '' }}{{ priceChange.pct.toFixed(2) }}%</span>
+        <div class="hero-right">
+          <div v-if="latest" class="hero-price">
+            <span class="price-num" :class="priceChange && priceChange.diff >= 0 ? 'col-up' : 'col-dn'">
+              {{ latest.close.toFixed(2) }}
+            </span>
+            <div v-if="priceChange" class="price-delta" :class="priceChange.diff >= 0 ? 'col-up' : 'col-dn'">
+              <span>{{ priceChange.diff >= 0 ? '+' : '' }}{{ priceChange.diff.toFixed(2) }}</span>
+              <span>{{ priceChange.diff >= 0 ? '+' : '' }}{{ priceChange.pct.toFixed(2) }}%</span>
+            </div>
+            <span class="price-date">{{ latest.date.split('T')[0] }}</span>
           </div>
-          <span class="price-date">{{ latest.date.split('T')[0] }}</span>
+          <!-- 刷新按鈕 -->
+          <button
+            class="refresh-btn"
+            :class="{ 'refresh-btn--running': refreshStage === 'running', 'refresh-btn--done': refreshStage === 'done', 'refresh-btn--error': refreshStage === 'error' }"
+            :disabled="refreshStage === 'running'"
+            @click="startRefresh"
+            :title="refreshStage === 'running' ? refreshMsg : '更新近 3 個月日K 資料'"
+          >
+            <svg class="refresh-icon" :class="{ spinning: refreshStage === 'running' }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 2v6h-6"/>
+              <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+              <path d="M3 22v-6h6"/>
+              <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+            </svg>
+            <span>{{ refreshStage === 'running' ? `${refreshProgress}%` : refreshStage === 'done' ? '✓ 完成' : refreshStage === 'error' ? '失敗' : '更新資料' }}</span>
+          </button>
         </div>
+      </div>
+
+      <!-- 刷新進度提示 -->
+      <div v-if="refreshStage !== 'idle'" class="refresh-toast" :class="`refresh-toast--${refreshStage}`">
+        <span v-if="refreshStage === 'running'">
+          <span class="toast-bar"><span class="toast-fill" :style="{ width: refreshProgress + '%' }"></span></span>
+          {{ refreshMsg }}
+        </span>
+        <span v-else>{{ refreshMsg }}</span>
       </div>
 
       <!-- ══ Stat Bar ══ -->
@@ -738,6 +811,74 @@ const avgVolume = computed(() => {
 
 .col-up { color: var(--up); }
 .col-dn { color: var(--dn); }
+
+/* ── Hero Right（價格 + 刷新）─────────── */
+.hero-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* ── Refresh Button ────────────────────── */
+.refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line2);
+  background: var(--s2);
+  color: var(--t2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.refresh-btn:hover:not(:disabled) {
+  background: var(--s3);
+  color: var(--t1);
+  border-color: var(--blue);
+}
+.refresh-btn:disabled { opacity: 0.65; cursor: not-allowed; }
+.refresh-btn--done  { border-color: var(--dn); color: var(--dn); }
+.refresh-btn--error { border-color: var(--up); color: var(--up); }
+
+.refresh-icon { flex-shrink: 0; transition: transform 0.3s; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.refresh-icon.spinning { animation: spin 0.9s linear infinite; }
+
+/* ── Refresh Toast ─────────────────────── */
+.refresh-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--t2);
+  border: 1px solid var(--line);
+  background: var(--s1);
+  margin-bottom: 4px;
+}
+.refresh-toast--done  { border-color: var(--dn); color: var(--dn); }
+.refresh-toast--error { border-color: var(--up); color: var(--up); }
+
+.toast-bar {
+  display: inline-block;
+  width: 80px;
+  height: 4px;
+  background: var(--line2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.toast-fill {
+  display: block;
+  height: 100%;
+  background: var(--blue);
+  transition: width 0.3s ease;
+}
 
 /* ── Stat Bar ──────────────────────────── */
 .stat-bar {

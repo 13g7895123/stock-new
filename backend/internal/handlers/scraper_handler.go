@@ -234,3 +234,105 @@ func latestTradingDay() time.Time {
 	}
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 }
+
+// RefreshStockSSE godoc
+// GET /api/scraper/prices/stock/:symbol
+// 抓取單支股票近 3 個月的日K 資料並更新資料庫，以 SSE 回傳進度
+func (h *ScraperHandler) RefreshStockSSE(c *gin.Context) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	symbol := c.Param("symbol")
+	if symbol == "" {
+		writeSSE(c, sseEvent{Stage: "error", Error: "缺少股票代號", Progress: 0})
+		return
+	}
+
+	// 查詢市場別（TWSE / TPEX）
+	var stock models.Stock
+	if err := h.db.Where("symbol = ?", symbol).First(&stock).Error; err != nil {
+		writeSSE(c, sseEvent{Stage: "error", Error: fmt.Sprintf("找不到股票 %s", symbol), Progress: 0})
+		return
+	}
+
+	writeSSE(c, sseEvent{
+		Stage:    "start",
+		Message:  fmt.Sprintf("開始更新 %s（%s）近 3 個月資料...", symbol, stock.Market),
+		Progress: 5,
+	})
+
+	// 計算近 3 個月的年月列表
+	now := time.Now().In(time.FixedZone("CST", 8*3600))
+	months := make([]string, 0, 3)
+	for i := 2; i >= 0; i-- {
+		t := now.AddDate(0, -i, 0)
+		months = append(months, fmt.Sprintf("%d%02d", t.Year(), t.Month()))
+	}
+
+	var all []models.DailyPrice
+	for idx, ym := range months {
+		progress := 10 + (idx+1)*25
+		writeSSE(c, sseEvent{
+			Stage:    "fetching",
+			Message:  fmt.Sprintf("抓取 %s/%s 資料中...", symbol, ym),
+			Progress: progress,
+		})
+
+		var records []models.DailyPrice
+		var fetchErr error
+
+		if stock.Market == "TWSE" {
+			records, fetchErr = scraper.FetchTWSEStockHistory(symbol, ym)
+		} else {
+			records, fetchErr = scraper.FetchTPEXStockHistory(symbol, ym)
+		}
+
+		if fetchErr != nil {
+			// 單月失敗不中止，繼續抓其他月份
+			writeSSE(c, sseEvent{
+				Stage:    "warning",
+				Message:  fmt.Sprintf("%s/%s 抓取失敗：%s，跳過", symbol, ym, fetchErr.Error()),
+				Progress: progress,
+			})
+			continue
+		}
+		all = append(all, records...)
+		writeSSE(c, sseEvent{
+			Stage:    "fetched",
+			Message:  fmt.Sprintf("%s/%s 取得 %d 筆", symbol, ym, len(records)),
+			Progress: progress + 5,
+			Total:    len(records),
+		})
+	}
+
+	if len(all) == 0 {
+		writeSSE(c, sseEvent{Stage: "error", Error: "未取得任何資料，可能為假日或股票代號錯誤", Progress: 90})
+		return
+	}
+
+	writeSSE(c, sseEvent{
+		Stage:    "saving",
+		Message:  fmt.Sprintf("共 %d 筆，寫入資料庫...", len(all)),
+		Progress: 90,
+		Synced:   len(all),
+	})
+
+	result := h.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "symbol"}, {Name: "date"}},
+		DoUpdates: clause.AssignmentColumns([]string{"open", "high", "low", "close", "volume", "tx_value", "tx_count"}),
+	}).CreateInBatches(&all, 200)
+
+	if result.Error != nil {
+		writeSSE(c, sseEvent{Stage: "error", Error: result.Error.Error(), Progress: 90})
+		return
+	}
+
+	writeSSE(c, sseEvent{
+		Stage:   "done",
+		Message: fmt.Sprintf("%s 更新完成！共 %d 筆日K 資料", symbol, len(all)),
+		Progress: 100,
+		Synced:  len(all),
+	})
+}

@@ -175,6 +175,84 @@ type tpexDayRecord struct {
 	TxCount  string `json:"TransactionRecord"`
 }
 
+// ─────────────────────────────────────────────
+// TPEX：單支股票歷史日K（daily_trading_info）
+// ─────────────────────────────────────────────
+
+const TPEXStockDayURL = "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+
+type tpexStockDayResp struct {
+	TotalRecords int        `json:"iTotalRecords"`
+	AaData       [][]string `json:"aaData"`
+}
+
+// FetchTPEXStockHistory 抓取單支上櫃股票指定年月的日K
+// yyyymm 格式為 "YYYYMM"（如 "202501"）
+func FetchTPEXStockHistory(symbol, yyyymm string) ([]models.DailyPrice, error) {
+	// 轉換為民國年 YYY/MM
+	if len(yyyymm) < 6 {
+		return nil, fmt.Errorf("invalid yyyymm: %s", yyyymm)
+	}
+	year, _ := strconv.Atoi(yyyymm[:4])
+	rocYear := year - 1911
+	rocDate := fmt.Sprintf("%d/%s", rocYear, yyyymm[4:6])
+
+	url := fmt.Sprintf("%s?l=zh-tw&d=%s&stkno=%s", TPEXStockDayURL, rocDate, symbol)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var r tpexStockDayResp
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+
+	// aaData 欄位順序：[日期, 股名, 成交股數, 成交金額, 開盤, 最高, 最低, 收盤, 漲跌, 成交筆數]
+	result := make([]models.DailyPrice, 0, len(r.AaData))
+	for _, row := range r.AaData {
+		if len(row) < 10 {
+			continue
+		}
+		date, err := parseROCDate(row[0])
+		if err != nil {
+			continue
+		}
+		open, _ := parsePrice(row[4])
+		high, _ := parsePrice(row[5])
+		low, _ := parsePrice(row[6])
+		close_, _ := parsePrice(row[7])
+		vol, _ := parseVolume(row[2])
+		txVal, _ := parseVolume(row[3])
+		txCnt, _ := strconv.Atoi(cleanNumber(row[9]))
+
+		if open == 0 && high == 0 {
+			continue
+		}
+
+		result = append(result, models.DailyPrice{
+			Symbol:  symbol,
+			Date:    date,
+			Open:    open,
+			High:    high,
+			Low:     low,
+			Close:   close_,
+			Volume:  vol,
+			TxValue: txVal,
+			TxCount: txCnt,
+		})
+	}
+	return result, nil
+}
+
 // FetchTPEXDayAll 重用現有 tpex_mainboard_quotes 端點，補充 OHLCV 欄位
 func FetchTPEXDayAll(date time.Time) ([]models.DailyPrice, error) {
 	req, err := http.NewRequest(http.MethodGet, TPEXOtcURL, nil)
