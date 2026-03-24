@@ -61,7 +61,7 @@ func (h *StockHandler) Create(c *gin.Context) {
 }
 
 func (h *StockHandler) Update(c *gin.Context) {
-	id := c.Param("id")
+	id := c.Param("symbol")
 	var stock models.Stock
 	if err := h.db.First(&stock, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "stock not found"})
@@ -76,7 +76,7 @@ func (h *StockHandler) Update(c *gin.Context) {
 }
 
 func (h *StockHandler) Delete(c *gin.Context) {
-	id := c.Param("id")
+	id := c.Param("symbol")
 	if err := h.db.Delete(&models.Stock{}, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

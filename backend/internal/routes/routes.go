@@ -43,8 +43,8 @@ func Setup(db *gorm.DB) *gin.Engine {
 			stocks.GET("", tagHandler.ListStocks) // 覆寫：支援 industry/tag_id/q 篩選 + Preload Tags
 			stocks.GET("/:symbol", stockHandler.GetBySymbol)
 			stocks.POST("", stockHandler.Create)
-			stocks.PUT("/:id", stockHandler.Update)
-			stocks.DELETE("/:id", stockHandler.Delete)
+			stocks.PUT("/:symbol", stockHandler.Update)
+			stocks.DELETE("/:symbol", stockHandler.Delete)
 			// 日K 價量
 			stocks.GET("/:symbol/prices", priceHandler.List)
 			stocks.GET("/:symbol/prices/latest", priceHandler.Latest)
