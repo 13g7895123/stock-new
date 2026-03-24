@@ -43,7 +43,8 @@ fi
 
 # ── 密碼安全性：若仍為預設值則自動替換 ───────────────────────
 gen_password() {
-  tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 8
+  # 使用子 shell 隔離 pipefail，避免 head 關閉後 tr 收到 SIGPIPE (exit 141)
+  (set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 8)
 }
 
 rotate_if_default() {
