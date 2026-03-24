@@ -30,9 +30,9 @@ func (h *ChipsHandler) Status(c *gin.Context) {
 	result := h.db.Order("started_at DESC").First(&job)
 	if result.Error != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"status":     "never",
-			"is_fresh":   false,
-			"next_run":   nextSaturday().Format(time.RFC3339),
+			"status":   "never",
+			"is_fresh": false,
+			"next_run": nextSaturday().Format(time.RFC3339),
 		})
 		return
 	}

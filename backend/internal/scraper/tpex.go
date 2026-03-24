@@ -9,8 +9,9 @@ import (
 const TPEXOtcURL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
 
 type tpexQuote struct {
-	Symbol string `json:"SecuritiesCompanyCode"`
-	Name   string `json:"CompanyName"`
+	Symbol   string `json:"SecuritiesCompanyCode"`
+	Name     string `json:"CompanyName"`
+	Industry string `json:"IndustryName"`
 }
 
 // FetchOtcStocks 從 TPEX 抓取上櫃股票清單，套用相同的四碼非零開頭過濾
@@ -41,7 +42,7 @@ func FetchOtcStocks() ([]TWSeStock, error) {
 	var result []TWSeStock
 	for _, s := range all {
 		if regularStockPattern.MatchString(s.Symbol) {
-			result = append(result, TWSeStock{Symbol: s.Symbol, Name: s.Name})
+			result = append(result, TWSeStock{Symbol: s.Symbol, Name: s.Name, Industry: s.Industry})
 		}
 	}
 

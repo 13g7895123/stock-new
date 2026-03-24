@@ -92,10 +92,16 @@ func (h *ScraperHandler) SyncStocksSSE(c *gin.Context) {
 	// --- 合併寫入 DB ---
 	all := append(listed, otc...)
 	stocks := make([]models.Stock, 0, len(all))
-	for _, s := range all {
+	for i, s := range all {
+		market := "TPEX"
+		if i < len(listed) {
+			market = "TWSE"
+		}
 		stocks = append(stocks, models.Stock{
-			Symbol: s.Symbol,
-			Name:   s.Name,
+			Symbol:   s.Symbol,
+			Name:     s.Name,
+			Industry: s.Industry,
+			Market:   market,
 		})
 	}
 
@@ -108,7 +114,7 @@ func (h *ScraperHandler) SyncStocksSSE(c *gin.Context) {
 
 	result := h.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "symbol"}},
-		DoUpdates: clause.AssignmentColumns([]string{"name", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"name", "industry", "market", "updated_at"}),
 	}).Create(&stocks)
 
 	if result.Error != nil {

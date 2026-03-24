@@ -34,12 +34,13 @@ func Setup(db *gorm.DB) *gin.Engine {
 	scraperHandler := handlers.NewScraperHandler(db)
 	priceHandler := handlers.NewPriceHandler(db)
 	chipsHandler := handlers.NewChipsHandler(db)
+	tagHandler := handlers.NewTagHandler(db)
 
 	api := r.Group("/api")
 	{
 		stocks := api.Group("/stocks")
 		{
-			stocks.GET("", stockHandler.List)
+			stocks.GET("", tagHandler.ListStocks)         // 覆寫：支援 industry/tag_id/q 篩選 + Preload Tags
 			stocks.GET("/:symbol", stockHandler.GetBySymbol)
 			stocks.POST("", stockHandler.Create)
 			stocks.PUT("/:id", stockHandler.Update)
@@ -47,6 +48,20 @@ func Setup(db *gorm.DB) *gin.Engine {
 			// 日K 價量
 			stocks.GET("/:symbol/prices", priceHandler.List)
 			stocks.GET("/:symbol/prices/latest", priceHandler.Latest)
+			// Tags 指派
+			stocks.PUT("/:symbol/tags", tagHandler.SetStockTags)
+		}
+
+		// 產業列表
+		api.GET("/industries", tagHandler.ListIndustries)
+
+		// Tags CRUD
+		tags := api.Group("/tags")
+		{
+			tags.GET("",      tagHandler.List)
+			tags.POST("",     tagHandler.Create)
+			tags.PUT("/:id",  tagHandler.Update)
+			tags.DELETE("/:id", tagHandler.Delete)
 		}
 
 		scraperGroup := api.Group("/scraper")
@@ -57,7 +72,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 
 		chips := api.Group("/chips")
 		{
-			chips.GET("/status",  chipsHandler.Status)
+			chips.GET("/status", chipsHandler.Status)
 			chips.POST("/trigger", chipsHandler.Trigger)
 		}
 	}

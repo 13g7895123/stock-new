@@ -48,15 +48,22 @@ interface ChipsStatus {
 const { data: chipsStatus, refresh: refreshChips } = await useFetch<ChipsStatus>('/api/chips/status')
 
 const chipsTriggering = ref(false)
+const chipsError = ref('')
 async function triggerChips() {
   if (chipsTriggering.value) return
   chipsTriggering.value = true
+  chipsError.value = ''
   try {
     await $fetch('/api/chips/trigger', { method: 'POST' })
     await new Promise(r => setTimeout(r, 1500))
     await refreshChips()
-  } catch (_) {
-    // ignore 409 (already running)
+  } catch (err: unknown) {
+    const e = err as { response?: { status?: number }; message?: string }
+    if (e?.response?.status === 409) {
+      chipsError.value = '已有爬取任務執行中'
+    } else {
+      chipsError.value = 'scraper 服務未啟動，請執行 docker compose up chips_scraper'
+    }
   } finally {
     chipsTriggering.value = false
   }
@@ -116,20 +123,9 @@ function startSSE(url: string, label: string) {
 function syncStocks() { startSSE('/api/scraper/stocks', 'stocks') }
 function syncPrices() { startSSE('/api/scraper/prices', 'prices') }
 
-// 表格搜尋
-const searchQuery = ref('')
 const stockList = computed<Stock[]>(() =>
   Array.isArray(stocks.value) ? stocks.value : []
 )
-
-const filteredStocks = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return stockList.value
-  return stockList.value.filter(s =>
-    s.symbol.toLowerCase().includes(q) ||
-    s.name.toLowerCase().includes(q)
-  )
-})
 
 // K 線圖快速跳轉
 const jumpSymbol = ref('')
@@ -166,12 +162,6 @@ const lastSyncDisplay = computed(() => {
   if (latest.getFullYear() < 2000) return '尚未同步'
   return latest.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' })
 })
-
-// 捲動到表格
-const tableSection = ref<HTMLElement | null>(null)
-function scrollToTable() {
-  tableSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
 
 const today = new Date().toLocaleDateString('zh-TW', {
   year: 'numeric',
@@ -264,9 +254,9 @@ function toggleTheme() {
               </div>
             </div>
           </div>
-          <button class="ghost-btn" @click="scrollToTable">
-            瀏覽完整列表 <span class="ghost-btn__arr">↓</span>
-          </button>
+          <NuxtLink to="/stocks" class="ghost-btn">
+            瀏覽完整列表 <span class="ghost-btn__arr">→</span>
+          </NuxtLink>
         </article>
 
         <!-- Card 2: Status (2 cols) -->
@@ -378,65 +368,9 @@ function toggleTheme() {
           >
             {{ chipsTriggering || chipsStatus?.status === 'running' ? '爬取中…' : '手動觸發爬取' }}
           </button>
+          <p v-if="chipsError" class="chips-err">⚠ {{ chipsError }}</p>
         </article>
 
-      </div>
-    </section>
-
-    <!-- ══ Stock Table ══ -->
-    <section ref="tableSection" class="table-section">
-      <div class="table-topbar">
-        <div class="table-topbar__left">
-          <h2 class="table-heading">股票列表</h2>
-          <span class="table-count">{{ filteredStocks.length.toLocaleString() }} / {{ totalStocks.toLocaleString() }}</span>
-        </div>
-        <input
-          v-model="searchQuery"
-          class="table-filter"
-          type="text"
-          placeholder="搜尋代號或名稱…"
-        />
-      </div>
-
-      <div v-if="status === 'pending'" class="table-empty">
-        <span class="spin-icon">◌</span> 載入中…
-      </div>
-
-      <table v-else-if="filteredStocks.length > 0" class="stock-table">
-        <thead>
-          <tr>
-            <th>代號</th>
-            <th>名稱</th>
-            <th class="ra">股價</th>
-            <th class="ra">漲跌</th>
-            <th class="ra">漲跌幅</th>
-            <th class="ra">成交量</th>
-            <th class="ca">—</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="stock in filteredStocks" :key="stock.id">
-            <td class="td-sym">
-              <NuxtLink :to="`/stocks/${stock.symbol}`">{{ stock.symbol }}</NuxtLink>
-            </td>
-            <td class="td-name">{{ stock.name }}</td>
-            <td class="ra td-price">{{ stock.price > 0 ? stock.price.toFixed(2) : '—' }}</td>
-            <td class="ra" :class="stock.change > 0 ? 'col-up' : stock.change < 0 ? 'col-dn' : 'col-flat'">
-              {{ stock.price > 0 ? (stock.change > 0 ? '+' : '') + stock.change.toFixed(2) : '—' }}
-            </td>
-            <td class="ra" :class="stock.change_pct > 0 ? 'col-up' : stock.change_pct < 0 ? 'col-dn' : 'col-flat'">
-              {{ stock.price > 0 ? (stock.change_pct > 0 ? '+' : '') + stock.change_pct.toFixed(2) + '%' : '—' }}
-            </td>
-            <td class="ra td-vol">{{ stock.volume > 0 ? stock.volume.toLocaleString() : '—' }}</td>
-            <td class="ca">
-              <NuxtLink :to="`/stocks/${stock.symbol}`" class="row-link">K 線</NuxtLink>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div v-else class="table-empty">
-        尚無資料。請先使用「同步股票清單」從 TWSE / TPEX 抓取。
       </div>
     </section>
 
@@ -721,6 +655,13 @@ function toggleTheme() {
 .pip--busy { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
+.chips-err {
+  font-size: 12px;
+  color: var(--up);
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
 .card-eyebrow {
   font-size: 11px;
   font-weight: 600;
@@ -811,9 +752,10 @@ function toggleTheme() {
   align-items: center;
   gap: 6px;
   transition: color 0.15s;
+  text-decoration: none;
 }
 .ghost-btn:hover { color: var(--t1); }
-.ghost-btn:hover .ghost-btn__arr { transform: translateY(3px); }
+.ghost-btn:hover .ghost-btn__arr { transform: translateX(3px); }
 
 .ghost-btn__arr {
   font-size: 13px;
@@ -951,133 +893,12 @@ function toggleTheme() {
 }
 .sug-name { color: var(--t2); }
 
-/* ── Table ─────────────────────────────── */
-.table-section {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 32px 40px 60px;
-}
-
-.table-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 0;
-}
-
-.table-topbar__left {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.table-heading {
-  font-size: 19px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.table-count {
-  font-size: 13px;
-  color: var(--t3);
-  font-variant-numeric: tabular-nums;
-}
-
-.table-filter {
-  width: 220px;
-  padding: 9px 13px;
-  font-size: 14.5px;
-  font-family: var(--font);
-  background: var(--s1);
-  border: 1px solid var(--line2);
-  outline: none;
-  color: var(--t1);
-  transition: border-color 0.15s;
-}
-.table-filter:focus { border-color: var(--t1); }
-.table-filter::placeholder { color: var(--t3); }
-
-.stock-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 15px;
-}
-
-.stock-table th {
-  text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  color: var(--t3);
-  padding: 14px 12px 11px 0;
-  border-bottom: 1px solid var(--line);
-  white-space: nowrap;
-}
-.stock-table th.ra { text-align: right; }
-.stock-table th.ca { text-align: center; }
-
-.stock-table td {
-  padding: 13px 12px 13px 0;
-  border-bottom: 1px solid var(--line);
-  vertical-align: middle;
-}
-.stock-table tr:last-child td { border-bottom: none; }
-.stock-table tbody tr:hover td { background: var(--s1); }
-
-.ra { text-align: right; font-variant-numeric: tabular-nums; }
-.ca { text-align: center; }
-
-.td-sym a {
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--gold);
-  text-decoration: none;
-  letter-spacing: 0.02em;
-}
-.td-sym a:hover { color: var(--t1); }
-
-.td-name  { color: var(--t2); max-width: 160px; }
-.td-price { font-weight: 600; }
-.td-vol   { color: var(--t3); }
-
-.col-up   { color: var(--up);  font-weight: 500; }
-.col-dn   { color: var(--dn);  font-weight: 500; }
-.col-flat { color: var(--t3); }
-
-.row-link {
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  color: var(--t3);
-  text-decoration: none;
-  padding: 3px 10px;
-  border: 1px solid var(--line);
-  transition: border-color 0.15s, color 0.15s;
-}
-.row-link:hover { border-color: var(--gold); color: var(--gold); }
-
-.table-empty {
-  padding: 52px 0;
-  text-align: center;
-  color: var(--t3);
-  font-size: 15px;
-  line-height: 1.9;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-}
-
 /* ── RWD ───────────────────────────────── */
 @media (max-width: 960px) {
   .site-header__inner,
   .sync-bar__inner { padding-left: 16px; padding-right: 16px; }
 
   .portal      { padding: 16px 16px 0; }
-  .table-section { padding: 20px 16px 40px; }
 
   .header-date { display: none; }
 
@@ -1093,16 +914,8 @@ function toggleTheme() {
   .big-num { font-size: 48px; }
   .overview-body { flex-direction: column; align-items: flex-start; gap: 16px; padding-bottom: 16px; }
 
-  .table-topbar { flex-direction: column; align-items: flex-start; gap: 10px; }
-  .table-filter { width: 100%; }
-
   .sync-bar__track,
   .sync-bar__url { display: none; }
-
-  .stock-table th:nth-child(5),
-  .stock-table td:nth-child(5),
-  .stock-table th:nth-child(6),
-  .stock-table td:nth-child(6) { display: none; }
 }
 
 @media (max-width: 520px) {
@@ -1116,8 +929,5 @@ function toggleTheme() {
   .card--action { min-height: unset; }
 
   .big-num { font-size: 40px; }
-
-  .stock-table th:nth-child(4),
-  .stock-table td:nth-child(4) { display: none; }
 }
 </style>

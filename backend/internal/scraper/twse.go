@@ -12,8 +12,9 @@ const TWSEListedURL = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
 var regularStockPattern = regexp.MustCompile(`^[1-9]\d{3}$`)
 
 type TWSeStock struct {
-	Symbol string `json:"公司代號"`
-	Name   string `json:"公司簡稱"`
+	Symbol   string `json:"公司代號"`
+	Name     string `json:"公司簡稱"`
+	Industry string `json:"產業別"`
 }
 
 func FetchListedStocks() ([]TWSeStock, error) {
