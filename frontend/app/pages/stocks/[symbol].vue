@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts'
-
 useHead({
   link: [
     { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
@@ -62,92 +60,203 @@ function toggleTheme() {
   nextTick(() => initChart())
 }
 
-// ── 圖表 ─────────────────────────────────
-const chartContainer = ref<HTMLElement | null>(null)
-let chart: ReturnType<typeof createChart> | null = null
+// ── Canvas K-line Chart ───────────────────
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+const canvasWrap = ref<HTMLElement | null>(null)
+const hoveredIdx = ref<number | null>(null)
+let roChart: ResizeObserver | null = null
 
-function getChartColors() {
+const CHART_H   = 460
+const PRICE_RATIO = 0.73
+const PAD_R   = 68   // right: price labels
+const PAD_T   = 14
+const PAD_B   = 28   // bottom: date labels
+const GAP_V   = 8    // gap between price & volume areas
+
+function getColors() {
   return isDark.value
-    ? {
-        bg: '#1e2030',      // --s2 暗色
-        text: '#f7f5f0',    // --t1 暗色
-        grid: '#2d3148',    // --line 暗色
-        border: '#3b4060',  // --line2 暗色
-      }
-    : {
-        bg: '#fcfcfa',      // --s2 亮色
-        text: '#1f2030',    // --t1 亮色
-        grid: '#e8e6e0',    // --line 亮色
-        border: '#c8c4b8',  // --line2 亮色
-      }
+    ? { bg: '#1c1e2f', grid: 'rgba(255,255,255,0.045)', axis: 'rgba(255,255,255,0.18)',
+        label: 'rgba(230,224,210,0.52)', up: '#e05252', dn: '#3daa6b',
+        xhair: 'rgba(255,255,255,0.22)', tooltip: 'rgba(24,27,44,0.92)' }
+    : { bg: '#fafaf8', grid: 'rgba(0,0,0,0.05)',       axis: 'rgba(0,0,0,0.18)',
+        label: 'rgba(18,20,38,0.48)',   up: '#c93535', dn: '#1f8a50',
+        xhair: 'rgba(0,0,0,0.20)',      tooltip: 'rgba(250,250,248,0.95)' }
+}
+
+function drawChart() {
+  const canvas = canvasRef.value
+  const wrap   = canvasWrap.value
+  if (!canvas || !wrap) return
+
+  const W = wrap.clientWidth
+  const H = CHART_H
+  const dpr = window.devicePixelRatio || 1
+
+  canvas.width  = W * dpr
+  canvas.height = H * dpr
+  canvas.style.width  = W + 'px'
+  canvas.style.height = H + 'px'
+
+  const ctx = canvas.getContext('2d')!
+  ctx.scale(dpr, dpr)
+
+  const priceH = Math.round((H - PAD_T - PAD_B - GAP_V) * PRICE_RATIO)
+  const volH   = H - PAD_T - PAD_B - GAP_V - priceH
+  const volTop = PAD_T + priceH + GAP_V
+  const drawW  = W - PAD_R
+
+  const c = getColors()
+
+  // Clear
+  ctx.fillStyle = c.bg
+  ctx.fillRect(0, 0, W, H)
+
+  const data = prices.value
+  if (!data || data.length === 0) {
+    ctx.fillStyle = c.label
+    ctx.font = '13px "DM Sans", system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('尚無資料', W / 2, H / 2)
+    return
+  }
+
+  const n = data.length
+  const barW  = drawW / n
+  const candW = Math.max(1, Math.min(barW * 0.65, 14))
+
+  // Price range
+  const pMin = Math.min(...data.map(d => d.low))  * 0.9975
+  const pMax = Math.max(...data.map(d => d.high)) * 1.0025
+  const vMax = Math.max(...data.map(d => d.volume)) * 1.05 || 1
+
+  const xOf     = (i: number) => i * barW + barW / 2
+  const yPrice  = (p: number) => PAD_T + priceH * (1 - (p - pMin) / (pMax - pMin))
+  const yVol    = (v: number) => volTop + volH * (1 - v / vMax)
+
+  // ── Grid lines (price area)
+  ctx.strokeStyle = c.grid
+  ctx.lineWidth = 1
+  const gridN = 5
+  for (let i = 0; i <= gridN; i++) {
+    const y = PAD_T + (priceH / gridN) * i
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(drawW, y); ctx.stroke()
+  }
+
+  // ── Price axis labels
+  ctx.fillStyle = c.label
+  ctx.textAlign = 'right'
+  ctx.font = '10.5px "DM Sans", system-ui, sans-serif'
+  for (let i = 0; i <= gridN; i++) {
+    const y = PAD_T + (priceH / gridN) * i
+    const p = pMax - (pMax - pMin) * (i / gridN)
+    ctx.fillText(p.toFixed(2), W - 4, y + 4)
+  }
+
+  // ── Date axis labels (x)
+  const maxLbl = Math.floor(drawW / 72)
+  const step   = Math.max(1, Math.ceil(n / maxLbl))
+  ctx.textAlign = 'center'
+  ctx.fillStyle = c.label
+  ctx.font = '10.5px "DM Sans", system-ui, sans-serif'
+  for (let i = 0; i < n; i += step) {
+    const x = xOf(i)
+    const date = data[i]!.date.split('T')[0]!
+    ctx.fillText(date.substring(5), x, H - 6)  // MM-DD
+  }
+
+  // ── Separating line between price & volume
+  ctx.strokeStyle = c.grid
+  ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(0, volTop - 2); ctx.lineTo(drawW, volTop - 2); ctx.stroke()
+
+  // ── Candles
+  for (let i = 0; i < n; i++) {
+    const d = data[i]!
+    const x = xOf(i)
+    const isUp = d.close >= d.open
+    const col  = isUp ? c.up : c.dn
+
+    // Wick
+    ctx.strokeStyle = col
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(x, yPrice(d.high))
+    ctx.lineTo(x, yPrice(d.low))
+    ctx.stroke()
+
+    // Body
+    const y1  = Math.min(yPrice(d.open), yPrice(d.close))
+    const bH  = Math.max(1, Math.abs(yPrice(d.close) - yPrice(d.open)))
+    ctx.fillStyle = col
+    ctx.fillRect(x - candW / 2, y1, candW, bH)
+  }
+
+  // ── Volume bars
+  const upVolAlpha  = isDark.value ? 'rgba(224,82,82,0.32)'  : 'rgba(201,53,53,0.28)'
+  const dnVolAlpha  = isDark.value ? 'rgba(61,170,107,0.32)' : 'rgba(31,138,80,0.28)'
+  for (let i = 0; i < n; i++) {
+    const d = data[i]!
+    const x = xOf(i)
+    const top = yVol(d.volume)
+    ctx.fillStyle = d.close >= d.open ? upVolAlpha : dnVolAlpha
+    ctx.fillRect(x - candW / 2, top, candW, volTop + volH - top)
+  }
+
+  // ── Crosshair
+  const hi = hoveredIdx.value
+  if (hi !== null && hi >= 0 && hi < n) {
+    const x = xOf(hi)
+    const d = data[hi]!
+    ctx.strokeStyle = c.xhair
+    ctx.lineWidth = 1
+    ctx.setLineDash([3, 4])
+
+    // Vertical
+    ctx.beginPath(); ctx.moveTo(x, PAD_T); ctx.lineTo(x, H - PAD_B); ctx.stroke()
+    // Horizontal (close price)
+    const yC = yPrice(d.close)
+    ctx.beginPath(); ctx.moveTo(0, yC); ctx.lineTo(drawW, yC); ctx.stroke()
+    ctx.setLineDash([])
+
+    // Price label on axis
+    ctx.fillStyle = c.label
+    ctx.textAlign = 'right'
+    ctx.font = 'bold 10.5px "DM Sans", system-ui, sans-serif'
+    ctx.fillText(d.close.toFixed(2), W - 4, yC - 4)
+  }
+}
+
+function onMouseMove(e: MouseEvent) {
+  const canvas = canvasRef.value
+  const wrap   = canvasWrap.value
+  if (!canvas || !wrap || !prices.value?.length) return
+  const rect = wrap.getBoundingClientRect()
+  const x = e.clientX - rect.left
+  const drawW = wrap.clientWidth - PAD_R
+  const n = prices.value.length
+  const barW = drawW / n
+  const idx = Math.floor(x / barW)
+  hoveredIdx.value = idx >= 0 && idx < n ? idx : null
+  drawChart()
+}
+
+function onMouseLeave() {
+  hoveredIdx.value = null
+  drawChart()
 }
 
 function initChart() {
-  if (!chartContainer.value) return
-  if (chart) { chart.remove(); chart = null }
-
-  const colors = getChartColors()
-
-  chart = createChart(chartContainer.value, {
-    layout: {
-      background: { color: colors.bg },
-      textColor: colors.text,
-      fontFamily: "'DM Sans', system-ui, sans-serif",
-      fontSize: 12,
-    },
-    grid: {
-      vertLines: { color: colors.grid },
-      horzLines: { color: colors.grid },
-    },
-    timeScale: {
-      borderColor: colors.border,
-      timeVisible: true,
-      fixLeftEdge: false,
-    },
-    crosshair: { mode: 1 },
-    rightPriceScale: { borderColor: colors.border },
-    height: 460,
-  })
-
-  const candle = chart.addSeries(CandlestickSeries, {
-    upColor: '#e05252',
-    downColor: '#3daa6b',
-    borderUpColor: '#e05252',
-    borderDownColor: '#3daa6b',
-    wickUpColor: '#e05252',
-    wickDownColor: '#3daa6b',
-  })
-
-  const volSeries = chart.addSeries(HistogramSeries, {
-    color: '#94a3b8',
-    priceFormat: { type: 'volume' },
-    priceScaleId: 'volume',
-  })
-  chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
-
-  if (prices.value && prices.value.length > 0) {
-    candle.setData(prices.value.map(p => ({
-      time: p.date.split('T')[0] as string,
-      open: p.open, high: p.high, low: p.low, close: p.close,
-    })))
-    volSeries.setData(prices.value.map(p => ({
-      time: p.date.split('T')[0] as string,
-      value: p.volume / 1000,
-      color: p.close >= p.open ? 'rgba(224,82,82,0.35)' : 'rgba(61,170,107,0.35)',
-    })))
-    chart.timeScale().fitContent()
-  }
-
-  const ro = new ResizeObserver(() => {
-    if (chart && chartContainer.value)
-      chart.applyOptions({ width: chartContainer.value.clientWidth })
-  })
-  ro.observe(chartContainer.value!)
+  if (!canvasWrap.value) return
+  if (roChart) { roChart.disconnect(); roChart = null }
+  drawChart()
+  roChart = new ResizeObserver(() => drawChart())
+  roChart.observe(canvasWrap.value)
 }
 
 onMounted(async () => { await nextTick(); initChart() })
-watch(prices, async () => { await nextTick(); initChart() })
-onBeforeUnmount(() => { chart?.remove() })
+watch(prices, async () => { await nextTick(); drawChart() })
+watch(isDark, () => drawChart())
+onBeforeUnmount(() => roChart?.disconnect())
 
 // ── 日期範圍快捷 ──────────────────────────
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | '2Y'
@@ -283,12 +392,26 @@ const avgVolume = computed(() => {
         <div v-if="!prices || prices.length === 0" class="chart-empty">
           此股票尚無日 K 資料，請先在首頁點擊「同步日 K 資料」。
         </div>
-        <ClientOnly v-else>
-          <div ref="chartContainer" class="chart-container" />
-          <template #fallback>
-            <div class="chart-container chart-loading">圖表載入中…</div>
-          </template>
-        </ClientOnly>
+        <div v-else ref="canvasWrap" class="chart-container"
+          @mousemove="onMouseMove" @mouseleave="onMouseLeave">
+          <canvas ref="canvasRef" />
+          <!-- Crosshair tooltip -->
+          <div
+            v-if="hoveredIdx !== null && prices?.[hoveredIdx]"
+            class="chart-tooltip"
+          >
+            <span class="tt-date">{{ prices[hoveredIdx]!.date.split('T')[0] }}</span>
+            <span class="tt-row"><em>開</em>{{ prices[hoveredIdx]!.open.toFixed(2) }}</span>
+            <span class="tt-row"><em>高</em>{{ prices[hoveredIdx]!.high.toFixed(2) }}</span>
+            <span class="tt-row"><em>低</em>{{ prices[hoveredIdx]!.low.toFixed(2) }}</span>
+            <span class="tt-row"><em>收</em>
+              <b :class="prices[hoveredIdx]!.close >= prices[hoveredIdx]!.open ? 'col-up' : 'col-dn'">
+                {{ prices[hoveredIdx]!.close.toFixed(2) }}
+              </b>
+            </span>
+            <span class="tt-row"><em>量</em>{{ Math.round(prices[hoveredIdx]!.volume / 1000).toLocaleString() }}張</span>
+          </div>
+        </div>
       </div>
 
       <!-- ══ OHLCV Table ══ -->
@@ -618,6 +741,50 @@ const avgVolume = computed(() => {
 
 .chart-container {
   width: 100%;
+  position: relative;
+  cursor: crosshair;
+}
+
+.chart-container canvas {
+  display: block;
+}
+
+.chart-tooltip {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  background: var(--s1);
+  border: 1px solid var(--line2);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 110px;
+  z-index: 10;
+}
+
+.tt-date {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--t3);
+  margin-bottom: 2px;
+}
+
+.tt-row {
+  display: flex;
+  gap: 6px;
+  color: var(--t1);
+}
+
+.tt-row em {
+  font-style: normal;
+  color: var(--t3);
+  font-size: 10.5px;
+  width: 14px;
 }
 
 .chart-empty {

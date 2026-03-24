@@ -33,6 +33,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 	stockHandler := handlers.NewStockHandler(db)
 	scraperHandler := handlers.NewScraperHandler(db)
 	priceHandler := handlers.NewPriceHandler(db)
+	chipsHandler := handlers.NewChipsHandler(db)
 
 	api := r.Group("/api")
 	{
@@ -52,6 +53,12 @@ func Setup(db *gorm.DB) *gin.Engine {
 		{
 			scraperGroup.GET("/stocks", scraperHandler.SyncStocksSSE)
 			scraperGroup.GET("/prices", scraperHandler.SyncPricesSSE)
+		}
+
+		chips := api.Group("/chips")
+		{
+			chips.GET("/status",  chipsHandler.Status)
+			chips.POST("/trigger", chipsHandler.Trigger)
 		}
 	}
 

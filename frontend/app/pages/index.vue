@@ -33,6 +33,48 @@ interface SyncState {
 
 const { data: stocks, status, refresh } = await useFetch<Stock[]>('/api/stocks')
 
+// ── 籌碼金字塔 ────────────────────────────
+interface ChipsStatus {
+  status: 'never' | 'running' | 'completed' | 'failed'
+  is_fresh: boolean
+  next_run: string
+  started_at?: string
+  completed_at?: string
+  total?: number
+  success?: number
+  fail?: number
+}
+
+const { data: chipsStatus, refresh: refreshChips } = await useFetch<ChipsStatus>('/api/chips/status')
+
+const chipsTriggering = ref(false)
+async function triggerChips() {
+  if (chipsTriggering.value) return
+  chipsTriggering.value = true
+  try {
+    await $fetch('/api/chips/trigger', { method: 'POST' })
+    await new Promise(r => setTimeout(r, 1500))
+    await refreshChips()
+  } catch (_) {
+    // ignore 409 (already running)
+  } finally {
+    chipsTriggering.value = false
+  }
+}
+
+const chipsLastSync = computed(() => {
+  if (!chipsStatus.value || chipsStatus.value.status === 'never') return '從未爬取'
+  if (!chipsStatus.value.started_at) return '未知'
+  const d = new Date(chipsStatus.value.started_at)
+  return d.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' })
+})
+
+const chipsNextRun = computed(() => {
+  if (!chipsStatus.value?.next_run) return '—'
+  const d = new Date(chipsStatus.value.next_run)
+  return d.toLocaleDateString('zh-TW', { month: 'long', day: 'numeric', weekday: 'short' })
+})
+
 const syncing = ref(false)
 const syncState = ref<SyncState | null>(null)
 const syncLabel = ref('')
@@ -303,6 +345,39 @@ function toggleTheme() {
               </li>
             </ul>
           </div>
+        </article>
+
+        <!-- Card 6: Chips Pyramid (2 cols) -->
+        <article class="card card--chips">
+          <p class="card-eyebrow">Chips Pyramid · 籌碼金字塔</p>
+          <div class="chips-body">
+            <div class="chips-fresh-badge" :class="chipsStatus?.is_fresh ? 'chips-fresh-badge--ok' : 'chips-fresh-badge--stale'">
+              <span class="pip pip--lg" :class="chipsStatus?.is_fresh ? 'pip--ok' : (chipsStatus?.status === 'running' ? 'pip--busy' : 'pip--warn')" />
+              <span>{{ chipsStatus?.is_fresh ? '本週資料已是最新' : chipsStatus?.status === 'running' ? '爬取中…' : chipsStatus?.status === 'never' ? '尚未爬取' : '資料已過期' }}</span>
+            </div>
+            <div class="chips-meta">
+              <div class="meta-row">
+                <span class="meta-key">上次爬取</span>
+                <span class="meta-val">{{ chipsLastSync }}</span>
+              </div>
+              <div v-if="chipsStatus && chipsStatus.status !== 'never'" class="meta-row">
+                <span class="meta-key">成功 / 總計</span>
+                <span class="meta-val">{{ chipsStatus.success ?? 0 }} / {{ chipsStatus.total ?? 0 }}</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-key">下次排程</span>
+                <span class="meta-val">{{ chipsNextRun }}（週六自動）</span>
+              </div>
+            </div>
+          </div>
+          <button
+            class="action-btn"
+            :class="{ 'action-btn--busy': chipsTriggering || chipsStatus?.status === 'running' }"
+            :disabled="chipsTriggering || chipsStatus?.status === 'running'"
+            @click="triggerChips"
+          >
+            {{ chipsTriggering || chipsStatus?.status === 'running' ? '爬取中…' : '手動觸發爬取' }}
+          </button>
         </article>
 
       </div>
@@ -619,6 +694,32 @@ function toggleTheme() {
 .card--status   { grid-column: span 2; }
 .card--action   { grid-column: span 1; min-height: 200px; }
 .card--lookup   { grid-column: span 2; position: relative; }
+.card--chips    { grid-column: span 2; }
+
+/* ── Chips card ─────────────────────────── */
+.chips-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.chips-fresh-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.chips-fresh-badge--ok    { border-color: var(--dn);   color: var(--dn); }
+.chips-fresh-badge--stale { border-color: var(--line2); color: var(--t2); }
+
+.pip--lg { width: 8px; height: 8px; }
+.pip--busy { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
 .card-eyebrow {
   font-size: 11px;
@@ -985,6 +1086,7 @@ function toggleTheme() {
   .card--status   { grid-column: span 2; }
   .card--action   { grid-column: span 1; }
   .card--lookup   { grid-column: span 2; }
+  .card--chips    { grid-column: span 2; }
 
   .card { padding: 18px 18px; }
 
@@ -1007,7 +1109,8 @@ function toggleTheme() {
   .cards-grid { grid-template-columns: 1fr; }
   .card--overview,
   .card--status,
-  .card--lookup { grid-column: span 1; }
+  .card--lookup,
+  .card--chips { grid-column: span 1; }
 
   .card { padding: 16px; }
   .card--action { min-height: unset; }

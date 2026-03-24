@@ -33,6 +33,7 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       DB_NAME: ${DB_NAME:-stockdb}
+      CHIPS_SCRAPER_URL: http://chips_scraper:5100
     ports:
       - "${BACKEND_PORT:-8086}:${BACKEND_INTERNAL_PORT:-8080}"
     depends_on:
@@ -52,6 +53,25 @@ services:
       - "${FRONTEND_PORT:-3002}:3000"
     depends_on:
       - backend
+    networks:
+      - stock-net
+
+  chips_scraper:
+    build:
+      context: ./scraper
+      dockerfile: Dockerfile
+    container_name: chips_scraper
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASS:-postgres}@postgres:5432/${DB_NAME:-stockdb}
+      SCRAPER_PORT: 5100
+      CONCURRENCY: ${CHIPS_CONCURRENCY:-3}
+      REQUEST_DELAY: ${CHIPS_REQUEST_DELAY:-2.0}
+      HEADLESS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - stock-net
 

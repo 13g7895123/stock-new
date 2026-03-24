@@ -1,0 +1,353 @@
+"""
+stock-chips-pyramid scraper
+抓取 norway.twsthr.info 的股票持股分佈資料，存入 PostgreSQL
+
+API:
+  POST /trigger          觸發全量爬取（以背景執行）
+  POST /trigger-single   觸發單支股票爬取（body: {"symbol": "2330"}）
+  GET  /status           回傳最新 job 狀態
+  GET  /health           健康檢查
+"""
+
+import asyncio
+import logging
+import os
+import re
+import traceback
+from datetime import datetime, date
+from typing import Optional
+
+import asyncpg
+from aiohttp import web
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from playwright.async_api import async_playwright, BrowserContext
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+load_dotenv()
+
+DATABASE_URL  = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@postgres:5432/stockdb")
+PORT          = int(os.getenv("SCRAPER_PORT", "5100"))
+CONCURRENCY   = int(os.getenv("CONCURRENCY", "3"))
+REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "2.0"))
+HEADLESS      = os.getenv("HEADLESS", "true").lower() == "true"
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger(__name__)
+
+# ── DB helpers ───────────────────────────────────────────────────────────────
+
+async def get_pool():
+    return await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+
+ENSURE_TABLES_SQL = """
+CREATE TABLE IF NOT EXISTS chips_sync_jobs (
+    id           BIGSERIAL PRIMARY KEY,
+    started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    status       VARCHAR(20) NOT NULL DEFAULT 'running',
+    total        INT NOT NULL DEFAULT 0,
+    success      INT NOT NULL DEFAULT 0,
+    fail         INT NOT NULL DEFAULT 0,
+    message      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS chips_holder_snapshots (
+    id          BIGSERIAL PRIMARY KEY,
+    job_id      BIGINT REFERENCES chips_sync_jobs(id),
+    symbol      VARCHAR(10) NOT NULL,
+    data_date   DATE NOT NULL,
+    scraped_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (symbol, data_date)
+);
+
+CREATE TABLE IF NOT EXISTS chips_holder_distributions (
+    id              BIGSERIAL PRIMARY KEY,
+    snapshot_id     BIGINT NOT NULL REFERENCES chips_holder_snapshots(id) ON DELETE CASCADE,
+    tier_rank       INT NOT NULL,
+    range_label     VARCHAR(60) NOT NULL,
+    holder_count    INT,
+    holder_pct      NUMERIC(7,4),
+    share_count     BIGINT,
+    share_pct       NUMERIC(7,4),
+    cum_holder_pct  NUMERIC(7,4),
+    cum_share_pct   NUMERIC(7,4)
+);
+"""
+
+async def ensure_tables(pool: asyncpg.Pool):
+    async with pool.acquire() as conn:
+        await conn.execute(ENSURE_TABLES_SQL)
+
+async def create_job(pool: asyncpg.Pool, total: int) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO chips_sync_jobs (status, total) VALUES ('running', $1) RETURNING id",
+            total,
+        )
+        return row["id"]
+
+async def update_job(pool: asyncpg.Pool, job_id: int, **kwargs):
+    sets = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(kwargs))
+    vals = list(kwargs.values())
+    async with pool.acquire() as conn:
+        await conn.execute(
+            f"UPDATE chips_sync_jobs SET {sets} WHERE id = $1",
+            job_id, *vals,
+        )
+
+async def finish_job(pool: asyncpg.Pool, job_id: int, success: int, fail: int):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE chips_sync_jobs
+               SET status='completed', completed_at=NOW(), success=$2, fail=$3
+               WHERE id=$1""",
+            job_id, success, fail,
+        )
+
+async def fail_job(pool: asyncpg.Pool, job_id: int, msg: str):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE chips_sync_jobs
+               SET status='failed', completed_at=NOW(), message=$2
+               WHERE id=$1""",
+            job_id, msg,
+        )
+
+async def get_symbols(pool: asyncpg.Pool) -> list[str]:
+    """取出所有 is_active 股票代碼（stock-new 的 stocks 資料表）"""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT symbol FROM stocks WHERE is_active = true ORDER BY symbol"
+        )
+        return [r["symbol"] for r in rows]
+
+async def save_snapshot(pool: asyncpg.Pool, job_id: int, symbol: str,
+                        data_date: date, distributions: list[dict]) -> bool:
+    """儲存快照與分佈資料，若同 symbol+data_date 已存在則略過"""
+    async with pool.acquire() as conn:
+        # UPSERT snapshot
+        row = await conn.fetchrow(
+            """INSERT INTO chips_holder_snapshots (job_id, symbol, data_date)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (symbol, data_date) DO UPDATE SET job_id=$1
+               RETURNING id""",
+            job_id, symbol, data_date,
+        )
+        snap_id = row["id"]
+
+        # Delete old distributions (in case of re-scrape)
+        await conn.execute(
+            "DELETE FROM chips_holder_distributions WHERE snapshot_id=$1", snap_id
+        )
+
+        # Insert distributions
+        await conn.executemany(
+            """INSERT INTO chips_holder_distributions
+               (snapshot_id, tier_rank, range_label, holder_count, holder_pct,
+                share_count, share_pct, cum_holder_pct, cum_share_pct)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)""",
+            [
+                (snap_id, d["tier_rank"], d["range_label"],
+                 d.get("holder_count"), d.get("holder_pct"),
+                 d.get("share_count"), d.get("share_pct"),
+                 d.get("cum_holder_pct"), d.get("cum_share_pct"))
+                for d in distributions
+            ],
+        )
+    return True
+
+# ── Parser ───────────────────────────────────────────────────────────────────
+
+def _parse_num(s: Optional[str]) -> Optional[float]:
+    if not s:
+        return None
+    s = s.strip().replace(",", "").replace("%", "")
+    if s in ("-", "N/A", "—", ""):
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+def _roc_to_ad(s: str) -> Optional[date]:
+    """民國年 YYY/MM/DD →西元"""
+    m = re.match(r"(\d{2,3})/(\d{1,2})/(\d{1,2})", s.strip())
+    if not m:
+        return None
+    y = int(m.group(1)) + 1911
+    try:
+        return date(y, int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+
+def _is_distribution_row(cells: list[str]) -> bool:
+    if len(cells) < 6:
+        return False
+    label = cells[0].strip()
+    # 持股區間格式：「1 ~ 999 股」「1,000 ~ 5,000 股」「1,000,001 股以上」
+    return bool(re.search(r"(\d[\d,]*)\s*(~|以上|以下)", label))
+
+def parse_page(html: str) -> tuple[Optional[date], list[dict]]:
+    soup = BeautifulSoup(html, "html.parser")
+
+    # 找資料日期
+    data_date: Optional[date] = None
+    for tag in soup.find_all(string=re.compile(r"\d{2,3}/\d{1,2}/\d{1,2}")):
+        d = _roc_to_ad(tag.strip())
+        if d:
+            data_date = d
+            break
+
+    distributions = []
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        for rank, row in enumerate(rows, start=1):
+            cells = [td.get_text(strip=True) for td in row.find_all(["td", "th"])]
+            if not _is_distribution_row(cells):
+                continue
+            distributions.append({
+                "tier_rank":     rank,
+                "range_label":   cells[0].strip(),
+                "holder_count":  int(_parse_num(cells[1]) or 0) or None,
+                "holder_pct":    _parse_num(cells[2]),
+                "share_count":   int(_parse_num(cells[3]) or 0) or None,
+                "share_pct":     _parse_num(cells[4]),
+                "cum_holder_pct": _parse_num(cells[5]) if len(cells) > 5 else None,
+                "cum_share_pct":  _parse_num(cells[6]) if len(cells) > 6 else None,
+            })
+
+    return data_date, distributions
+
+# ── Scraper ──────────────────────────────────────────────────────────────────
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
+async def fetch_page(context: BrowserContext, symbol: str) -> str:
+    url = f"https://norway.twsthr.info/StockHolders.aspx?stock={symbol}"
+    page = await context.new_page()
+    try:
+        await page.goto(url, wait_until="networkidle", timeout=30_000)
+        await page.wait_for_timeout(800)
+        return await page.content()
+    finally:
+        await page.close()
+
+async def scrape_symbol(context: BrowserContext, pool: asyncpg.Pool,
+                         job_id: int, symbol: str, sem: asyncio.Semaphore) -> bool:
+    async with sem:
+        try:
+            html = await fetch_page(context, symbol)
+            data_date, distributions = parse_page(html)
+            if not data_date or not distributions:
+                log.warning(f"[{symbol}] 無資料")
+                return False
+            await save_snapshot(pool, job_id, symbol, data_date, distributions)
+            log.info(f"[{symbol}] ✓ {data_date} {len(distributions)} 筆")
+            await asyncio.sleep(REQUEST_DELAY)
+            return True
+        except Exception as e:
+            log.error(f"[{symbol}] ✗ {e}")
+            return False
+
+async def run_scrape_job(pool: asyncpg.Pool, symbols: list[str]):
+    if not symbols:
+        log.info("沒有要爬取的股票")
+        return
+
+    job_id = await create_job(pool, len(symbols))
+    log.info(f"Job {job_id} 開始，共 {len(symbols)} 支股票")
+
+    sem = asyncio.Semaphore(CONCURRENCY)
+    success = fail = 0
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=HEADLESS)
+        context = await browser.new_context(
+            locale="zh-TW",
+            extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
+        )
+        try:
+            tasks = [scrape_symbol(context, pool, job_id, s, sem) for s in symbols]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if r is True:
+                    success += 1
+                else:
+                    fail += 1
+        finally:
+            await context.close()
+            await browser.close()
+
+    await finish_job(pool, job_id, success, fail)
+    log.info(f"Job {job_id} 完成 success={success} fail={fail}")
+
+# ── HTTP server ───────────────────────────────────────────────────────────────
+
+_pool: Optional[asyncpg.Pool] = None
+_running_task: Optional[asyncio.Task] = None
+
+async def get_db_pool() -> asyncpg.Pool:
+    global _pool
+    if _pool is None:
+        _pool = await get_pool()
+        await ensure_tables(_pool)
+    return _pool
+
+async def handle_trigger(request: web.Request) -> web.Response:
+    global _running_task
+    if _running_task and not _running_task.done():
+        return web.json_response({"ok": False, "msg": "已有爬取任務執行中"}, status=409)
+
+    pool = await get_db_pool()
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    symbol = body.get("symbol")
+    if symbol:
+        symbols = [symbol]
+    else:
+        symbols = await get_symbols(pool)
+
+    if not symbols:
+        return web.json_response({"ok": False, "msg": "沒有股票需要爬取（請先同步股票清單）"}, status=400)
+
+    _running_task = asyncio.create_task(run_scrape_job(pool, symbols))
+    return web.json_response({"ok": True, "total": len(symbols)})
+
+async def handle_status(request: web.Request) -> web.Response:
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """SELECT id, started_at, completed_at, status, total, success, fail, message
+               FROM chips_sync_jobs ORDER BY started_at DESC LIMIT 1"""
+        )
+    if not row:
+        return web.json_response({"status": "never"})
+
+    return web.json_response({
+        "id":           row["id"],
+        "status":       row["status"],
+        "started_at":   row["started_at"].isoformat() if row["started_at"] else None,
+        "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
+        "total":        row["total"],
+        "success":      row["success"],
+        "fail":         row["fail"],
+        "message":      row["message"],
+    })
+
+async def handle_health(request: web.Request) -> web.Response:
+    return web.json_response({"status": "ok"})
+
+async def init_app() -> web.Application:
+    app = web.Application()
+    app.router.add_post("/trigger",        handle_trigger)
+    app.router.add_post("/trigger-single", handle_trigger)
+    app.router.add_get("/status",          handle_status)
+    app.router.add_get("/health",          handle_health)
+    return app
+
+if __name__ == "__main__":
+    web.run_app(init_app(), host="0.0.0.0", port=PORT)
