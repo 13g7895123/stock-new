@@ -4,8 +4,8 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
 
   runtimeConfig: {
-    // 僅 server 端可用（不暴露給瀏覽器）
-    backendUrl: `http://localhost:${process.env.BACKEND_PORT ?? '8080'}`,
+    // 僅 server 端可用。由 frontend/.env 的 NUXT_BACKEND_URL 覆蓋
+    backendUrl: `http://localhost:8086`,
   },
 })
 
