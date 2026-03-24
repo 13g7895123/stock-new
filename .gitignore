@@ -8,10 +8,13 @@ dist/
 backend/tmp/
 backend/*.exe
 backend/server
+backend/.env
 
-# Environment
-.env
-*.local
+# Environment — 真實 env 檔（勿 commit）
+docker/.env
+docker/envs/.env.*
+# 但允許 example 範本
+!docker/envs/.env.*.example
 
 # Docker
 .docker/

@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASS:-postgres}
       POSTGRES_DB: ${DB_NAME:-stockdb}
     ports:
-      - "${DB_PORT_EXPOSED:-15433}:5432"
+      - "${DB_PORT_EXPOSED:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,7 +21,7 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     container_name: stock_backend
     env_file:
@@ -34,7 +34,7 @@ services:
       DB_PASS: ${DB_PASS:-postgres}
       DB_NAME: ${DB_NAME:-stockdb}
     ports:
-      - "${BACKEND_PORT:-8086}:${BACKEND_INTERNAL_PORT:-8080}"
+      - "${BACKEND_PORT:-8080}:${BACKEND_INTERNAL_PORT:-8080}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,13 +43,13 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: ../frontend
       dockerfile: Dockerfile
     container_name: stock_frontend
     environment:
       NUXT_BACKEND_URL: http://backend:${BACKEND_INTERNAL_PORT:-8080}
     ports:
-      - "${FRONTEND_PORT:-3002}:3000"
+      - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
       - backend
     networks:

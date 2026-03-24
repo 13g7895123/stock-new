@@ -5,7 +5,7 @@ useHead({
     { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
     {
       rel: 'stylesheet',
-      href: 'https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap',
+      href: 'https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fira+Code:wght@400;500;600&display=swap',
     },
   ],
 })
@@ -45,20 +45,9 @@ const { data: prices, refresh: refreshPrices } = await useFetch<DailyPrice[]>(
   () => `/api/stocks/${symbol}/prices?from=${from.value}&to=${to.value}&limit=2000`,
 )
 
-// ── 主題 ──────────────────────────────────
-const isDark = ref(
-  typeof localStorage !== 'undefined'
-    ? localStorage.getItem('tsm-theme') === 'dark'
-    : false
-)
-function toggleTheme() {
-  isDark.value = !isDark.value
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem('tsm-theme', isDark.value ? 'dark' : 'light')
-  }
-  // 圖表也需要重繪
-  nextTick(() => initChart())
-}
+// ── 主題 + 風格 ─────────────────────────────────────────────────────────
+const { isDark, appStyle, isBento, isClassic, toggleTheme, setTheme, setStyle } = useAppPrefs()
+const settingsOpen = ref(false)
 
 // ── Canvas K-line Chart ───────────────────
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -303,23 +292,103 @@ const avgVolume = computed(() => {
 </script>
 
 <template>
-  <div class="page" :class="{ light: !isDark }">
+  <div class="page" :class="{ light: !isDark, classic: isClassic }">
 
     <!-- ══ Site Header ══ -->
-    <header class="site-header">
+    <header v-if="!isClassic" class="site-header">
       <div class="site-header__inner">
         <div class="brand">
-          <span class="brand-badge">TSM</span>
-          <div class="brand-text">
-            <span class="brand-sub">Taiwan Stock Monitor</span>
-            <span class="brand-name">台股監控系統</span>
-          </div>
+          <NuxtLink to="/" class="back-link">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M10 13L5 8l5-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            首頁
+          </NuxtLink>
+          <span class="brand-sep" aria-hidden="true">/</span>
+          <NuxtLink to="/stocks" class="back-link">股票列表</NuxtLink>
+          <span class="brand-sep" aria-hidden="true">/</span>
+          <span class="brand-cur">{{ symbol }}</span>
         </div>
         <div class="header-right">
-          <NuxtLink to="/" class="back-btn">← 返回首頁</NuxtLink>
-          <button class="theme-toggle" :aria-label="isDark ? '切換亮色模式' : '切換暗色模式'" @click="toggleTheme">
-            <span v-if="isDark">☀</span>
-            <span v-else>☾</span>
+          <div class="settings-wrap">
+            <button class="btn-icon" aria-label="外觀設定" @click="settingsOpen = !settingsOpen">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="2.3" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.06 1.06M11.89 11.89l1.06 1.06M3.05 12.95l1.06-1.06M11.89 4.11l1.06-1.06" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <div v-if="settingsOpen" class="settings-overlay" @click="settingsOpen = false" />
+            <div v-if="settingsOpen" class="settings-panel">
+              <p class="sp-title">外觀設定</p>
+              <div class="sp-group">
+                <p class="sp-label">主題</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: !isDark }" @click="setTheme(false)">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.8" fill="currentColor"/><path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    亮色
+                  </button>
+                  <button class="sp-btn" :class="{ active: isDark }" @click="setTheme(true)">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13.2 9.3A5.8 5.8 0 0 1 6.7 2.8a.4.4 0 0 0-.46-.5A6.3 6.3 0 1 0 13.7 9.76a.4.4 0 0 0-.5-.46Z" fill="currentColor"/></svg>
+                    暗色
+                  </button>
+                </div>
+              </div>
+              <div class="sp-group">
+                <p class="sp-label">版面風格</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: isClassic }" @click="setStyle('classic')">Classic</button>
+                  <button class="sp-btn" :class="{ active: isBento }" @click="setStyle('bento')">Bento</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button class="btn-icon" :aria-label="isDark ? '切換亮色模式' : '切換暗色模式'" @click="toggleTheme">
+            <svg v-if="isDark" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="2.8" fill="currentColor"/>
+              <path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M13.2 9.3A5.8 5.8 0 0 1 6.7 2.8a.4.4 0 0 0-.46-.5A6.3 6.3 0 1 0 13.7 9.76a.4.4 0 0 0-.5-.46Z" fill="currentColor"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- ══ Classic Header ══ -->
+    <header v-else class="classic-header">
+      <div class="classic-header__inner">
+        <div class="classic-brand">
+          <NuxtLink to="/" class="classic-back">← 首頁</NuxtLink>
+          <span class="classic-sep">|</span>
+          <NuxtLink to="/stocks" class="classic-back">股票列表</NuxtLink>
+          <span class="classic-sep">/</span>
+          <span class="classic-badge">{{ symbol }}</span>
+        </div>
+        <div class="classic-header-right">
+          <div class="settings-wrap">
+            <button class="classic-settings-btn" aria-label="外觀設定" @click="settingsOpen = !settingsOpen">⚙</button>
+            <div v-if="settingsOpen" class="settings-overlay" @click="settingsOpen = false" />
+            <div v-if="settingsOpen" class="settings-panel">
+              <p class="sp-title">外觀設定</p>
+              <div class="sp-group">
+                <p class="sp-label">主題</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: !isDark }" @click="setTheme(false)">亮色</button>
+                  <button class="sp-btn" :class="{ active: isDark }" @click="setTheme(true)">暗色</button>
+                </div>
+              </div>
+              <div class="sp-group">
+                <p class="sp-label">版面風格</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: isClassic }" @click="setStyle('classic')">Classic</button>
+                  <button class="sp-btn" :class="{ active: isBento }" @click="setStyle('bento')">Bento</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button class="classic-toggle-btn" @click="toggleTheme">
+            <span v-if="isDark">☀</span><span v-else>☾</span>
           </button>
         </div>
       </div>
@@ -457,18 +526,21 @@ const avgVolume = computed(() => {
 <style scoped>
 /* ── Design Tokens（與首頁一致）──────────── */
 .page {
-  --bg:    oklch(14.5% 0.016 258);
-  --s1:    oklch(19%   0.018 258);
-  --s2:    oklch(23%   0.018 258);
-  --line:  oklch(28%   0.020 258);
-  --line2: oklch(36%   0.020 258);
-  --t1:    oklch(97%   0.006 82);
-  --t2:    oklch(78%   0.012 258);
-  --t3:    oklch(58%   0.014 258);
-  --gold:  oklch(76%   0.095 80);
-  --up:    oklch(59%   0.18  22);
-  --dn:    oklch(62%   0.17  148);
+  --bg:    oklch(9.5%  0.018 256);
+  --s1:    oklch(13%   0.020 257);
+  --s2:    oklch(16.5% 0.022 258);
+  --s3:    oklch(21%   0.024 258);
+  --line:  oklch(22%   0.023 258);
+  --line2: oklch(33%   0.023 258);
+  --blue:  oklch(63%   0.20  264);
+  --gold:  oklch(76%   0.13  82);
+  --t1:    oklch(96%   0.006 218);
+  --t2:    oklch(72%   0.013 240);
+  --t3:    oklch(50%   0.012 240);
+  --up:    oklch(62%   0.18  22);
+  --dn:    oklch(64%   0.18  148);
   --font:  'DM Sans', system-ui, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  --mono:  'Fira Code', 'JetBrains Mono', ui-monospace, monospace;
 
   min-height: 100vh;
   background: var(--bg);
@@ -483,22 +555,59 @@ const avgVolume = computed(() => {
 
 /* Light Mode */
 .page.light {
+  --bg:    oklch(96.5% 0.009 220);
+  --s1:    oklch(100%  0     0);
+  --s2:    oklch(97%   0.010 220);
+  --s3:    oklch(92%   0.014 220);
+  --line:  oklch(88%   0.012 220);
+  --line2: oklch(72%   0.015 240);
+  --blue:  oklch(47%   0.21  264);
+  --gold:  oklch(52%   0.16  72);
+  --t1:    oklch(10%   0.018 256);
+  --t2:    oklch(35%   0.016 240);
+  --t3:    oklch(57%   0.012 240);
+  --up:    oklch(44%   0.22  22);
+  --dn:    oklch(38%   0.20  148);
+}
+
+/* Classic Mode — Original tokens */
+.page.classic {
+  --bg:    oklch(14.5% 0.016 258);
+  --s1:    oklch(19%   0.018 258);
+  --s2:    oklch(23%   0.018 258);
+  --s3:    oklch(27%   0.020 258);
+  --line:  oklch(28%   0.020 258);
+  --line2: oklch(36%   0.020 258);
+  --blue:  oklch(56%   0.20  264);
+  --gold:  oklch(76%   0.095 80);
+  --t1:    oklch(97%   0.006 82);
+  --t2:    oklch(78%   0.012 258);
+  --t3:    oklch(58%   0.014 258);
+  --up:    oklch(59%   0.18  22);
+  --dn:    oklch(62%   0.17  148);
+  --mono:  'Fira Code', 'JetBrains Mono', ui-monospace, monospace;
+}
+.page.classic.light {
   --bg:    oklch(96.5% 0.007 82);
   --s1:    oklch(93%   0.008 82);
   --s2:    oklch(99%   0.004 82);
+  --s3:    oklch(90%   0.007 82);
   --line:  oklch(84%   0.012 258);
   --line2: oklch(68%   0.015 258);
+  --blue:  oklch(44%   0.21  264);
+  --gold:  oklch(48%   0.13  60);
   --t1:    oklch(13%   0.020 258);
   --t2:    oklch(34%   0.016 258);
   --t3:    oklch(54%   0.014 258);
-  --gold:  oklch(48%   0.13  60);
   --up:    oklch(44%   0.21  22);
   --dn:    oklch(38%   0.19  148);
 }
 
-/* ── Site Header ───────────────────────── */
+/* ── Site Header ─────────────────────────────────────────── */
 .site-header {
-  background: var(--s1);
+  background: color-mix(in oklch, var(--s1) 85%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
@@ -508,72 +617,54 @@ const avgVolume = computed(() => {
 .site-header__inner {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 0 40px;
-  height: 54px;
+  padding: 0 32px;
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.brand { display: flex; align-items: center; gap: 14px; }
+.brand { display: flex; align-items: center; gap: 10px; }
 
-.brand-badge {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  color: var(--bg);
-  background: var(--gold);
-  padding: 5px 8px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.brand-text { display: flex; flex-direction: column; gap: 2px; }
-
-.brand-sub {
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--t3);
-  line-height: 1;
-}
-
-.brand-name {
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--t1);
-  line-height: 1;
-}
-
-.header-right { display: flex; align-items: center; gap: 16px; }
-
-.back-btn {
-  font-size: 12.5px;
-  font-weight: 600;
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
   color: var(--t3);
   text-decoration: none;
-  letter-spacing: 0.02em;
   transition: color 0.15s;
 }
-.back-btn:hover { color: var(--gold); }
+.back-link:hover { color: var(--gold); }
 
-.theme-toggle {
-  background: none;
-  border: 1px solid var(--line2);
-  color: var(--t2);
-  font-size: 15px;
-  width: 32px;
-  height: 32px;
+.brand-sep { color: var(--line2); font-size: 14px; user-select: none; }
+
+.brand-cur {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--t1);
+  font-variant-numeric: tabular-nums;
+}
+
+.header-right { display: flex; align-items: center; gap: 10px; }
+
+.btn-icon {
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--t2);
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
-  padding: 0;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
   flex-shrink: 0;
 }
-.theme-toggle:hover { border-color: var(--gold); color: var(--gold); }
+.btn-icon:hover { background: var(--s3); border-color: var(--line2); color: var(--t1); }
 
 /* ── Content ───────────────────────────── */
 .content {
@@ -696,7 +787,9 @@ const avgVolume = computed(() => {
   border: 1px solid var(--line);
   border-top: none;
   background: var(--s2);
+  border-radius: 0 0 10px 10px;
   margin-bottom: 1px;
+  overflow: hidden;
 }
 
 .chart-toolbar {
@@ -728,6 +821,7 @@ const avgVolume = computed(() => {
   background: transparent;
   color: var(--t3);
   border: 1px solid transparent;
+  border-radius: 6px;
   cursor: pointer;
   letter-spacing: 0.04em;
   transition: color 0.15s, border-color 0.15s;
@@ -755,6 +849,7 @@ const avgVolume = computed(() => {
   left: 16px;
   background: var(--s1);
   border: 1px solid var(--line2);
+  border-radius: 8px;
   padding: 8px 12px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -764,6 +859,7 @@ const avgVolume = computed(() => {
   gap: 3px;
   min-width: 110px;
   z-index: 10;
+  box-shadow: 0 4px 16px oklch(0% 0 0 / 0.2);
 }
 
 .tt-date {
@@ -875,7 +971,7 @@ const avgVolume = computed(() => {
   .site-header__inner { padding: 0 16px; }
   .content { padding: 16px 16px 40px; }
 
-  .brand-sub { display: none; }
+  .brand-cur { font-size: 13px; }
 
   .hero { align-items: flex-start; flex-direction: column; }
   .hero-price { gap: 10px; }
@@ -886,4 +982,118 @@ const avgVolume = computed(() => {
   .ohlcv-table th:nth-child(7),
   .ohlcv-table td:nth-child(7) { display: none; }
 }
+
+/* ── Settings Panel ──────────────────────────────────────── */
+.settings-wrap { position: relative; }
+.settings-overlay { position: fixed; inset: 0; z-index: 99; }
+.settings-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 100;
+  background: var(--s2);
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 196px;
+  box-shadow: 0 8px 32px oklch(0% 0 0 / 0.28);
+}
+.sp-title { font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--t3); margin-bottom: 12px; }
+.sp-group { margin-bottom: 12px; }
+.sp-group:last-child { margin-bottom: 0; }
+.sp-label { font-size: 10.5px; letter-spacing: 0.10em; text-transform: uppercase; color: var(--t3); margin-bottom: 6px; }
+.sp-btns { display: flex; gap: 6px; }
+.sp-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 8px;
+  background: transparent;
+  border: 1px solid var(--line2);
+  border-radius: 7px;
+  color: var(--t2);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.sp-btn:hover { border-color: var(--t2); color: var(--t1); }
+.sp-btn.active { background: var(--blue); border-color: var(--blue); color: oklch(97% 0.01 220); }
+
+
+/* ── Classic structural overrides ──────────────────────────── */
+.page.classic .site-header { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--s1); }
+.page.classic .chart-panel { border-radius: 4px; }
+.page.classic .chart-toolbar { border-radius: 4px 4px 0 0; }
+.page.classic .range-btn { border-radius: 0; }
+.page.classic .chart-tooltip { border-radius: 4px; box-shadow: none; }
+.page.classic .settings-panel { border-radius: 4px; box-shadow: none; }
+.page.classic .sp-btn { border-radius: 0; }
+.page.classic .btn-icon { display: none; }
+
+/* ── Classic Header ─────────────────────────────────────────── */
+.classic-header {
+  background: var(--s1);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.classic-header__inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 32px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.classic-brand { display: flex; align-items: center; gap: 10px; }
+.classic-back { font-size: 12.5px; font-weight: 600; color: var(--t3); text-decoration: none; transition: color 0.15s; }
+.classic-back:hover { color: var(--gold); }
+.classic-sep { color: var(--line2); font-size: 13px; padding: 0 2px; user-select: none; }
+.classic-badge {
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--t1);
+  background: var(--s2);
+  border: 1px solid var(--line2);
+  padding: 3px 8px;
+  line-height: 1.4;
+}
+.classic-header-right { display: flex; align-items: center; gap: 10px; }
+.classic-settings-btn {
+  background: none;
+  border: 1px solid var(--line2);
+  color: var(--t2);
+  font-size: 14px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.classic-settings-btn:hover { border-color: var(--gold); color: var(--gold); }
+.classic-toggle-btn {
+  background: none;
+  border: 1px solid var(--line2);
+  color: var(--t2);
+  font-size: 15px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.classic-toggle-btn:hover { border-color: var(--gold); color: var(--gold); }
 </style>

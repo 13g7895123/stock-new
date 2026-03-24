@@ -1,26 +1,106 @@
 <template>
-  <div class="page" :class="{ light: !isDark }">
+  <div class="page" :class="{ light: !isDark, classic: isClassic }">
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet" />
 
-    <!-- ══ Header ══ -->
-    <header class="site-header">
+    <!-- ══ Bento / Terminal Header ══ -->
+    <header v-if="!isClassic" class="site-header">
       <div class="site-header__inner">
-        <nav class="header-left">
-          <NuxtLink to="/" class="back-link">← 首頁</NuxtLink>
-          <div class="brand">
-            <span class="brand-badge">TSM</span>
-            <div class="brand-text">
-              <span class="brand-sub">Stock Monitor</span>
-              <span class="brand-name">Stock Monitor</span>
-            </div>
-          </div>
-        </nav>
+        <div class="brand">
+          <NuxtLink to="/" class="back-link">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M10 13L5 8l5-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            首頁
+          </NuxtLink>
+          <span class="brand-sep" aria-hidden="true">/</span>
+          <span class="brand-cur">股票列表</span>
+        </div>
         <div class="header-right">
           <span class="header-date">{{ today }}</span>
-          <button class="theme-toggle" @click="isDark = !isDark; saveTheme()" :title="isDark ? '切換淺色' : '切換深色'">
-            {{ isDark ? '○' : '●' }}
+          <div class="settings-wrap">
+            <button class="btn-icon" aria-label="外觀設定" @click="settingsOpen = !settingsOpen">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="2.3" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.06 1.06M11.89 11.89l1.06 1.06M3.05 12.95l1.06-1.06M11.89 4.11l1.06-1.06" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <div v-if="settingsOpen" class="settings-overlay" @click="settingsOpen = false" />
+            <div v-if="settingsOpen" class="settings-panel">
+              <p class="sp-title">外觀設定</p>
+              <div class="sp-group">
+                <p class="sp-label">主題</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: !isDark }" @click="setTheme(false)">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.8" fill="currentColor"/><path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    亮色
+                  </button>
+                  <button class="sp-btn" :class="{ active: isDark }" @click="setTheme(true)">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13.2 9.3A5.8 5.8 0 0 1 6.7 2.8a.4.4 0 0 0-.46-.5A6.3 6.3 0 1 0 13.7 9.76a.4.4 0 0 0-.5-.46Z" fill="currentColor"/></svg>
+                    暗色
+                  </button>
+                </div>
+              </div>
+              <div class="sp-group">
+                <p class="sp-label">版面風格</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: isClassic }" @click="setStyle('classic')">Classic</button>
+                  <button class="sp-btn" :class="{ active: isBento }" @click="setStyle('bento')">Bento</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button class="btn-icon" :aria-label="isDark ? '切換亮色模式' : '切換暗色模式'" @click="toggleTheme">
+            <svg v-if="isDark" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="2.8" fill="currentColor"/>
+              <path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M13.2 9.3A5.8 5.8 0 0 1 6.7 2.8a.4.4 0 0 0-.46-.5A6.3 6.3 0 1 0 13.7 9.76a.4.4 0 0 0-.5-.46Z" fill="currentColor"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- ══ Classic Header ══ -->
+    <header v-else class="classic-header">
+      <div class="classic-header__inner">
+        <div class="classic-brand">
+          <NuxtLink to="/" class="classic-back">← 首頁</NuxtLink>
+          <span class="classic-sep">|</span>
+          <span class="classic-badge">TSM</span>
+          <div class="classic-brand-text">
+            <span class="classic-brand-sub">Taiwan Stock Monitor</span>
+            <span class="classic-brand-name">股票列表</span>
+          </div>
+        </div>
+        <div class="classic-header-right">
+          <span class="classic-date">{{ today }}</span>
+          <div class="settings-wrap">
+            <button class="classic-settings-btn" aria-label="外觀設定" @click="settingsOpen = !settingsOpen">⚙</button>
+            <div v-if="settingsOpen" class="settings-overlay" @click="settingsOpen = false" />
+            <div v-if="settingsOpen" class="settings-panel">
+              <p class="sp-title">外觀設定</p>
+              <div class="sp-group">
+                <p class="sp-label">主題</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: !isDark }" @click="setTheme(false)">亮色</button>
+                  <button class="sp-btn" :class="{ active: isDark }" @click="setTheme(true)">暗色</button>
+                </div>
+              </div>
+              <div class="sp-group">
+                <p class="sp-label">版面風格</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: isClassic }" @click="setStyle('classic')">Classic</button>
+                  <button class="sp-btn" :class="{ active: isBento }" @click="setStyle('bento')">Bento</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button class="classic-toggle-btn" @click="toggleTheme">
+            <span v-if="isDark">☀</span><span v-else>☾</span>
           </button>
         </div>
       </div>
@@ -235,16 +315,9 @@ interface Stock {
   tags: Tag[]
 }
 
-// ── Theme ──────────────────────────────────────────────────────
-const isDark = ref(true)
-onMounted(() => {
-  const saved = localStorage.getItem('tsm-theme')
-  if (saved !== null) isDark.value = saved === 'dark'
-  else isDark.value = false
-})
-function saveTheme() {
-  localStorage.setItem('tsm-theme', isDark.value ? 'dark' : 'light')
-}
+// ── Theme + Style ───────────────────────────────────────────────
+const { isDark, appStyle, isBento, isClassic, toggleTheme, setTheme, setStyle } = useAppPrefs()
+const settingsOpen = ref(false)
 
 // ── Date ───────────────────────────────────────────────────────
 const today = new Date().toLocaleDateString('zh-TW', {
@@ -398,17 +471,20 @@ onMounted(async () => {
 <style scoped>
 /* ── Design Tokens ─────────────────────────────────────────── */
 .page {
-  --bg:    oklch(14.5% 0.016 258);
-  --s1:    oklch(19%   0.018 258);
-  --s2:    oklch(23%   0.018 258);
-  --line:  oklch(28%   0.020 258);
-  --line2: oklch(36%   0.020 258);
-  --t1:    oklch(97%   0.006 82);
-  --t2:    oklch(78%   0.012 258);
-  --t3:    oklch(58%   0.014 258);
-  --gold:  oklch(76%   0.095 80);
-  --up:    oklch(59%   0.18  22);
-  --dn:    oklch(62%   0.17  148);
+  --bg:    oklch(9.5%  0.018 256);
+  --s1:    oklch(13%   0.020 257);
+  --s2:    oklch(16.5% 0.022 258);
+  --s3:    oklch(21%   0.024 258);
+  --line:  oklch(22%   0.023 258);
+  --line2: oklch(33%   0.023 258);
+  --blue:  oklch(63%   0.20  264);
+  --gold:  oklch(76%   0.13  82);
+  --t1:    oklch(96%   0.006 218);
+  --t2:    oklch(72%   0.013 240);
+  --t3:    oklch(50%   0.012 240);
+  --up:    oklch(62%   0.18  22);
+  --dn:    oklch(64%   0.18  148);
+  --warn:  oklch(73%   0.13  72);
   --font:  'DM Sans', system-ui, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
 
   min-height: 100vh;
@@ -424,22 +500,61 @@ onMounted(async () => {
 
 /* ── Light Mode ────────────────────────────────────────────── */
 .page.light {
+  --bg:    oklch(96.5% 0.009 220);
+  --s1:    oklch(100%  0     0);
+  --s2:    oklch(97%   0.010 220);
+  --s3:    oklch(92%   0.014 220);
+  --line:  oklch(88%   0.012 220);
+  --line2: oklch(72%   0.015 240);
+  --blue:  oklch(47%   0.21  264);
+  --gold:  oklch(52%   0.16  72);
+  --t1:    oklch(10%   0.018 256);
+  --t2:    oklch(35%   0.016 240);
+  --t3:    oklch(57%   0.012 240);
+  --up:    oklch(44%   0.22  22);
+  --dn:    oklch(38%   0.20  148);
+  --warn:  oklch(50%   0.16  72);
+}
+
+/* ── Classic Mode ──────────────────────────────────────────── */
+.page.classic {
+  --bg:    oklch(14.5% 0.016 258);
+  --s1:    oklch(19%   0.018 258);
+  --s2:    oklch(23%   0.018 258);
+  --s3:    oklch(27%   0.020 258);
+  --line:  oklch(28%   0.020 258);
+  --line2: oklch(36%   0.020 258);
+  --blue:  oklch(56%   0.20  264);
+  --gold:  oklch(76%   0.095 80);
+  --t1:    oklch(97%   0.006 82);
+  --t2:    oklch(78%   0.012 258);
+  --t3:    oklch(58%   0.014 258);
+  --up:    oklch(59%   0.18  22);
+  --dn:    oklch(62%   0.17  148);
+  --warn:  oklch(72%   0.13  72);
+}
+.page.classic.light {
   --bg:    oklch(96.5% 0.007 82);
   --s1:    oklch(93%   0.008 82);
   --s2:    oklch(99%   0.004 82);
+  --s3:    oklch(90%   0.007 82);
   --line:  oklch(84%   0.012 258);
   --line2: oklch(68%   0.015 258);
+  --blue:  oklch(44%   0.21  264);
+  --gold:  oklch(48%   0.13  60);
   --t1:    oklch(13%   0.020 258);
   --t2:    oklch(34%   0.016 258);
   --t3:    oklch(54%   0.014 258);
-  --gold:  oklch(48%   0.13  60);
   --up:    oklch(44%   0.21  22);
   --dn:    oklch(38%   0.19  148);
+  --warn:  oklch(52%   0.14  72);
 }
 
 /* ── Header ────────────────────────────────────────────────── */
 .site-header {
-  background: var(--s1);
+  background: color-mix(in oklch, var(--s1) 85%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
@@ -498,30 +613,31 @@ onMounted(async () => {
 }
 .header-right { display: flex; align-items: center; gap: 24px; }
 .header-date {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--t3);
   font-variant-numeric: tabular-nums;
 }
-.theme-toggle {
-  background: none;
-  border: 1px solid var(--line2);
-  color: var(--t2);
-  font-size: 15px;
-  width: 32px;
-  height: 32px;
+.btn-icon {
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--t2);
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
-  line-height: 1;
-  padding: 0;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  flex-shrink: 0;
 }
-.theme-toggle:hover { border-color: var(--gold); color: var(--gold); }
+.btn-icon:hover { background: var(--s3); border-color: var(--line2); color: var(--t1); }
 
 /* ── Toolbar ───────────────────────────────────────────────── */
 .toolbar {
-  background: var(--s2);
+  background: color-mix(in oklch, var(--s2) 90%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
 }
 .toolbar__inner {
@@ -546,16 +662,20 @@ onMounted(async () => {
 }
 .search-input {
   width: 260px;
-  padding: 9px 13px;
-  font-size: 14.5px;
+  padding: 9px 14px;
+  font-size: 14px;
   font-family: var(--font);
   background: var(--s1);
   border: 1px solid var(--line2);
+  border-radius: 9px;
   outline: none;
   color: var(--t1);
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.search-input:focus { border-color: var(--t1); }
+.search-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--blue) 16%, transparent);
+}
 .search-input::placeholder { color: var(--t3); }
 
 /* ── Layout ────────────────────────────────────────────────── */
@@ -684,6 +804,7 @@ onMounted(async () => {
   font-family: var(--font);
   background: var(--s1);
   border: 1px solid var(--line2);
+  border-radius: 6px;
   outline: none;
   color: var(--t1);
   transition: border-color 0.15s;
@@ -696,6 +817,7 @@ onMounted(async () => {
   width: 28px;
   height: 28px;
   border: 1px solid var(--line2);
+  border-radius: 5px;
   background: none;
   padding: 2px;
   cursor: pointer;
@@ -707,6 +829,7 @@ onMounted(async () => {
   height: 28px;
   background: var(--gold);
   border: none;
+  border-radius: 6px;
   color: var(--bg);
   font-size: 16px;
   font-weight: 700;
@@ -783,7 +906,8 @@ onMounted(async () => {
   color: var(--t2);
   background: var(--s1);
   border: 1px solid var(--line);
-  padding: 2px 7px;
+  padding: 2px 8px;
+  border-radius: 100px;
   white-space: nowrap;
   max-width: 110px;
   display: inline-block;
@@ -807,8 +931,9 @@ onMounted(async () => {
 .tag-chip {
   font-size: 11.5px;
   font-weight: 600;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border: 1px solid;
+  border-radius: 100px;
   white-space: nowrap;
   line-height: 1.4;
 }
@@ -839,9 +964,10 @@ onMounted(async () => {
   z-index: 100;
   background: var(--s2);
   border: 1px solid var(--line2);
+  border-radius: 10px;
   padding: 10px 12px;
   min-width: 160px;
-  box-shadow: 0 8px 24px oklch(0% 0 0 / 0.3);
+  box-shadow: 0 8px 24px oklch(0% 0 0 / 0.28);
 }
 .tag-popover-head {
   font-size: 11px;
@@ -873,6 +999,7 @@ onMounted(async () => {
   text-decoration: none;
   padding: 3px 10px;
   border: 1px solid var(--line);
+  border-radius: 6px;
   transition: border-color 0.15s, color 0.15s;
 }
 .row-link:hover { border-color: var(--gold); color: var(--gold); }
@@ -890,6 +1017,48 @@ onMounted(async () => {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin-icon { display: inline-block; animation: spin 1.4s linear infinite; color: var(--gold); }
+
+/* ── Settings Panel ────────────────────────────────────────── */
+.settings-wrap { position: relative; }
+.settings-overlay { position: fixed; inset: 0; z-index: 99; }
+.settings-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 100;
+  background: var(--s2);
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 196px;
+  box-shadow: 0 8px 32px oklch(0% 0 0 / 0.28);
+}
+.sp-title { font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--t3); margin-bottom: 12px; }
+.sp-group { margin-bottom: 12px; }
+.sp-group:last-child { margin-bottom: 0; }
+.sp-label { font-size: 10.5px; letter-spacing: 0.10em; text-transform: uppercase; color: var(--t3); margin-bottom: 6px; }
+.sp-btns { display: flex; gap: 6px; }
+.sp-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 8px;
+  background: transparent;
+  border: 1px solid var(--line2);
+  border-radius: 7px;
+  color: var(--t2);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.sp-btn:hover { border-color: var(--t2); color: var(--t1); }
+.sp-btn.active { background: var(--blue); border-color: var(--blue); color: oklch(97% 0.01 220); }
+
 
 /* ── RWD ───────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
@@ -927,4 +1096,70 @@ onMounted(async () => {
   .stock-table th:nth-child(7),
   .stock-table td:nth-child(7) { display: none; }
 }
+
+/* ── Classic structural overrides ───────────────────────────── */
+.page.classic .search-input { border-radius: 4px; }
+.page.classic .industry-pill { border-radius: 4px; }
+.page.classic .tag-chip { border-radius: 4px; }
+.page.classic .row-link { border-radius: 0; }
+.page.classic .tag-popover { border-radius: 4px; }
+.page.classic .btn-icon { display: none; }
+.page.classic .settings-panel { border-radius: 4px; box-shadow: none; }
+.page.classic .sp-btn { border-radius: 0; }
+
+/* ── Classic Header ─────────────────────────────────────────── */
+.classic-header {
+  background: var(--s1);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.classic-header__inner {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 40px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.classic-brand { display: flex; align-items: center; gap: 14px; }
+.classic-back { font-size: 12.5px; font-weight: 600; color: var(--t3); text-decoration: none; transition: color 0.15s; }
+.classic-back:hover { color: var(--gold); }
+.classic-sep { color: var(--line2); font-size: 14px; padding: 0 4px; }
+.classic-badge { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; color: var(--bg); background: var(--gold); padding: 5px 8px; line-height: 1; flex-shrink: 0; }
+.classic-brand-text { display: flex; flex-direction: column; gap: 2px; }
+.classic-brand-sub { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--t3); line-height: 1; }
+.classic-brand-name { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; color: var(--t1); line-height: 1; }
+.classic-header-right { display: flex; align-items: center; gap: 16px; }
+.classic-date { font-size: 12px; color: var(--t3); font-variant-numeric: tabular-nums; }
+.classic-settings-btn {
+  background: none;
+  border: 1px solid var(--line2);
+  color: var(--t2);
+  font-size: 14px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.classic-settings-btn:hover { border-color: var(--gold); color: var(--gold); }
+.classic-toggle-btn {
+  background: none;
+  border: 1px solid var(--line2);
+  color: var(--t2);
+  font-size: 15px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.classic-toggle-btn:hover { border-color: var(--gold); color: var(--gold); }
 </style>

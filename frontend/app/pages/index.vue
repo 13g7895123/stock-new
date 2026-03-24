@@ -5,7 +5,7 @@ useHead({
     { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
     {
       rel: 'stylesheet',
-      href: 'https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap',
+      href: 'https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fira+Code:wght@400;500;600&display=swap',
     },
   ],
 })
@@ -306,55 +306,138 @@ const today = new Date().toLocaleDateString('zh-TW', {
   weekday: 'long',
 })
 
-// 主題切換
-const isDark = ref(
-  typeof localStorage !== 'undefined'
-    ? localStorage.getItem('tsm-theme') === 'dark'
-    : false
-)
-function toggleTheme() {
-  isDark.value = !isDark.value
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem('tsm-theme', isDark.value ? 'dark' : 'light')
-  }
-}
+const { isDark, appStyle, isBento, isClassic, toggleTheme, setTheme, setStyle } = useAppPrefs()
+const settingsOpen = ref(false)
 </script>
 
 <template>
-  <div class="page" :class="{ light: !isDark }">
+  <div class="page" :class="{ light: !isDark, classic: isClassic }">
 
-    <!-- ══ Site Header ══ -->
-    <header class="site-header">
-      <div class="site-header__inner">
+    <!-- ══ Header ══ -->
+    <!-- ══ Bento / Terminal Header ══ -->
+    <header v-if="!isClassic" class="header">
+      <div class="header__inner">
         <div class="brand">
-          <span class="brand-badge">TSM</span>
-          <div class="brand-text">
+          <div class="brand-logo" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+              <rect x="0"  y="0"  width="11" height="11" rx="2" fill="var(--blue)" />
+              <rect x="15" y="0"  width="11" height="11" rx="2" fill="var(--blue)" opacity="0.45" />
+              <rect x="0"  y="15" width="11" height="11" rx="2" fill="var(--gold)" opacity="0.55" />
+              <rect x="15" y="15" width="11" height="11" rx="2" fill="var(--blue)" opacity="0.8" />
+            </svg>
+          </div>
+          <div class="brand-info">
+            <span class="brand-main">台股監控</span>
             <span class="brand-sub">Taiwan Stock Monitor</span>
-            <span class="brand-name">台股監控系統</span>
           </div>
         </div>
-        <div class="header-right">
-          <span class="header-api" :class="status === 'error' ? 'header-api--err' : 'header-api--ok'">
+        <nav class="header-nav">
+          <span class="api-status" :class="status === 'error' ? 'api-status--err' : 'api-status--ok'">
             <span class="api-pip" />
             {{ status === 'error' ? 'API 離線' : status === 'pending' ? '連線中' : 'API 正常' }}
           </span>
           <span class="header-date">{{ today }}</span>
-          <button class="theme-toggle" :aria-label="isDark ? '切換亮色模式' : '切換暗色模式'" @click="toggleTheme">
-            <span v-if="isDark">☀</span>
-            <span v-else>☾</span>
+
+          <!-- Settings -->
+          <div class="settings-wrap">
+            <button class="btn-icon" aria-label="外觀設定" @click="settingsOpen = !settingsOpen">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="2.3" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.06 1.06M11.89 11.89l1.06 1.06M3.05 12.95l1.06-1.06M11.89 4.11l1.06-1.06" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <div v-if="settingsOpen" class="settings-overlay" @click="settingsOpen = false" />
+            <div v-if="settingsOpen" class="settings-panel">
+              <p class="sp-title">外觀設定</p>
+              <div class="sp-group">
+                <p class="sp-label">主題</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: !isDark }" @click="setTheme(false)">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.8" fill="currentColor"/><path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    亮色
+                  </button>
+                  <button class="sp-btn" :class="{ active: isDark }" @click="setTheme(true)">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13.2 9.3A5.8 5.8 0 0 1 6.7 2.8a.4.4 0 0 0-.46-.5A6.3 6.3 0 1 0 13.7 9.76a.4.4 0 0 0-.5-.46Z" fill="currentColor"/></svg>
+                    暗色
+                  </button>
+                </div>
+              </div>
+              <div class="sp-group">
+                <p class="sp-label">版面風格</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: isClassic }" @click="setStyle('classic')">Classic</button>
+                  <button class="sp-btn" :class="{ active: isBento }" @click="setStyle('bento')">Bento</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Theme toggle -->
+          <button class="btn-icon" :aria-label="isDark ? '切換亮色模式' : '切換暗色模式'" @click="toggleTheme">
+            <svg v-if="isDark" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="2.8" fill="currentColor"/>
+              <path d="M8 1.5V3M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M13.2 9.3A5.8 5.8 0 0 1 6.7 2.8a.4.4 0 0 0-.46-.5A6.3 6.3 0 1 0 13.7 9.76a.4.4 0 0 0-.5-.46Z" fill="currentColor"/>
+            </svg>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- ══ Classic Header ══ -->
+    <header v-if="isClassic" class="classic-header">
+      <div class="classic-header__inner">
+        <div class="classic-brand">
+          <span class="classic-badge">TSM</span>
+          <div class="classic-brand-text">
+            <span class="classic-brand-sub">Taiwan Stock Monitor</span>
+            <span class="classic-brand-name">台股監控系統</span>
+          </div>
+        </div>
+        <div class="classic-header-right">
+          <span class="classic-api-status" :class="status === 'error' ? 'classic-api--err' : 'classic-api--ok'">
+            <span class="classic-pip" />
+            {{ status === 'error' ? 'API 離線' : status === 'pending' ? '連線中' : 'API 正常' }}
+          </span>
+          <span class="classic-date">「 {{ today }} 」</span>
+          <div class="settings-wrap">
+            <button class="classic-settings-btn" aria-label="外觀設定" @click="settingsOpen = !settingsOpen">⚙</button>
+            <div v-if="settingsOpen" class="settings-overlay" @click="settingsOpen = false" />
+            <div v-if="settingsOpen" class="settings-panel">
+              <p class="sp-title">外觀設定</p>
+              <div class="sp-group">
+                <p class="sp-label">主題</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: !isDark }" @click="setTheme(false)">亮色</button>
+                  <button class="sp-btn" :class="{ active: isDark }" @click="setTheme(true)">暗色</button>
+                </div>
+              </div>
+              <div class="sp-group">
+                <p class="sp-label">版面風格</p>
+                <div class="sp-btns">
+                  <button class="sp-btn" :class="{ active: isClassic }" @click="setStyle('classic')">Classic</button>
+                  <button class="sp-btn" :class="{ active: isBento }" @click="setStyle('bento')">Bento</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <button class="classic-toggle-btn" :aria-label="isDark ? '切換亮色' : '切換暗色'" @click="toggleTheme">
+            <span v-if="isDark">☀</span><span v-else>☾</span>
           </button>
         </div>
       </div>
     </header>
 
-    <!-- ══ Sync progress bar ══ -->
+    <!-- ══ Sync Bar ══ -->
     <Transition name="slide-down">
       <div v-if="syncState" class="sync-bar" :class="`sync-bar--${syncState.stage}`">
         <div class="sync-bar__inner">
           <span class="sync-bar__icon">
-            <span v-if="syncState.stage === 'error'">✕</span>
-            <span v-else-if="syncState.stage === 'done'">✓</span>
-            <span v-else class="syncing-spin">◌</span>
+            <span v-if="syncState.stage === 'error'" class="sb-x">✕</span>
+            <span v-else-if="syncState.stage === 'done'" class="sb-ok">✓</span>
+            <span v-else class="sb-spin">◌</span>
           </span>
           <span class="sync-bar__msg">{{ syncState.stage === 'error' ? syncState.error : syncState.message }}</span>
           <div v-if="syncState.stage !== 'error'" class="sync-bar__track">
@@ -366,9 +449,8 @@ function toggleTheme() {
       </div>
     </Transition>
 
-    <!-- ══ Portal ══ -->
-    <section class="portal">
-      <!-- ══ Card Grid ══ -->
+    <!-- ══ Classic Portal ══ -->
+    <section v-if="isClassic" class="portal">
       <div class="cards-grid">
 
         <!-- Card 1: Overview (2 cols) -->
@@ -549,68 +631,322 @@ function toggleTheme() {
       </div>
     </section>
 
+    <!-- ══ Main ══ -->
+    <main v-else class="main">
+      <div class="bento">
+
+        <!-- ── Overview (2 cols) ── -->
+        <article class="card card-overview">
+          <p class="eyebrow">Database Overview</p>
+          <div class="overview-body">
+            <div class="num-block">
+              <span class="big-num">{{ totalStocks > 0 ? totalStocks.toLocaleString() : '—' }}</span>
+            </div>
+            <span class="num-label">上市上櫃股票</span>
+          </div>
+          <div class="meta-stack">
+            <div class="meta-row">
+              <span class="mkey">最後同步</span>
+              <span class="mval">{{ lastSyncDisplay }}</span>
+            </div>
+            <div class="meta-row">
+              <span class="mkey">資料來源</span>
+              <span class="mval">TWSE · TPEX</span>
+            </div>
+          </div>
+          <NuxtLink to="/stocks" class="link-btn">
+            瀏覽完整列表
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M2 7h10M8.5 3.5l4 3.5-4 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </NuxtLink>
+        </article>
+
+        <!-- ── System Status (1 col) ── -->
+        <article class="card card-status">
+          <p class="eyebrow">System Status</p>
+          <ul class="status-list">
+            <li class="status-item">
+              <span class="pip" :class="status !== 'error' ? 'pip-ok' : 'pip-err'" />
+              <span class="si-name">API 連線</span>
+              <span class="si-val">{{ status === 'error' ? '失敗' : status === 'pending' ? '連線中…' : '正常' }}</span>
+            </li>
+            <li class="status-item">
+              <span class="pip" :class="totalStocks > 0 ? 'pip-ok' : 'pip-warn'" />
+              <span class="si-name">資料庫</span>
+              <span class="si-val">{{ totalStocks > 0 ? `${totalStocks.toLocaleString()} 筆` : '空白' }}</span>
+            </li>
+            <li class="status-item">
+              <span class="pip" :class="syncing ? 'pip-busy' : 'pip-idle'" />
+              <span class="si-name">同步作業</span>
+              <span class="si-val">{{ syncing ? '進行中' : '閒置' }}</span>
+            </li>
+          </ul>
+        </article>
+
+        <!-- ── K-Chart Lookup (1 col, featured) ── -->
+        <article class="card card-jump">
+          <p class="eyebrow eyebrow-blue">Chart Analysis</p>
+          <h2 class="card-title">K 線圖查詢</h2>
+          <p class="card-desc">輸入股票代號，直接前往 K 線蠟燭圖與成交量分析頁。</p>
+          <div class="jump-wrap">
+            <div class="jump-field" :class="{ active: jumpSymbol }">
+              <input
+                v-model="jumpSymbol"
+                class="jump-input"
+                type="text"
+                placeholder="代號，如 2330"
+                autocomplete="off"
+                @keyup.enter="jumpToChart"
+              />
+              <button class="jump-go" aria-label="前往查詢" @click="jumpToChart">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M2 8h12M10 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
+            <ul v-if="jumpSuggestions.length > 0 && jumpSymbol" class="suggestions">
+              <li
+                v-for="s in jumpSuggestions"
+                :key="s.symbol"
+                class="suggestion"
+                @click="router.push(`/stocks/${s.symbol}`)"
+              >
+                <span class="sug-sym">{{ s.symbol }}</span>
+                <span class="sug-name">{{ s.name }}</span>
+              </li>
+            </ul>
+          </div>
+        </article>
+
+        <!-- ── Sync Stocks (1 col) ── -->
+        <article class="card card-sync">
+          <p class="eyebrow">Data Sync</p>
+          <h2 class="card-title">同步股票清單</h2>
+          <p class="card-desc">從 TWSE 及 TPEX 抓取最新上市、上櫃股票名冊，更新本地資料庫。</p>
+          <button
+            class="action-btn"
+            :class="{ busy: syncing && syncLabel === 'stocks' }"
+            :disabled="syncing"
+            @click="syncStocks"
+          >{{ syncing && syncLabel === 'stocks' ? '同步中…' : '立即同步' }}</button>
+        </article>
+
+        <!-- ── Sync Prices (1 col) ── -->
+        <article class="card card-sync">
+          <p class="eyebrow">Data Sync</p>
+          <h2 class="card-title">同步日 K 資料</h2>
+          <p class="card-desc">批次更新全部股票之歷史日 K 價量資料，作為技術分析基礎。</p>
+          <button
+            class="action-btn"
+            :class="{ busy: syncing && syncLabel === 'prices' }"
+            :disabled="syncing"
+            @click="syncPrices"
+          >{{ syncing && syncLabel === 'prices' ? '同步中…' : '立即同步' }}</button>
+        </article>
+
+        <!-- ── Chips Pyramid (2 cols) ── -->
+        <article class="card card-chips">
+          <p class="eyebrow">Chips Pyramid · 籌碼金字塔</p>
+
+          <div class="chips-badge" :class="chipsBadgeClass">
+            <span class="pip pip-lg" :class="{
+              'pip-ok':   chipsStatus?.is_fresh,
+              'pip-busy': chipsStatus?.status === 'running',
+              'pip-err':  chipsStatus?.status === 'failed',
+              'pip-warn': !chipsStatus?.is_fresh && chipsStatus?.status !== 'running' && chipsStatus?.status !== 'failed'
+            }" />
+            {{ chipsBadgeText }}
+          </div>
+
+          <div class="chips-summary" :class="chipsSummaryClass">
+            <p class="cs-title">{{ chipsSummaryTitle }}</p>
+            <p class="cs-text">{{ chipsSummaryText }}</p>
+          </div>
+
+          <div class="chips-meta">
+            <div class="meta-row">
+              <span class="mkey">上次爬取</span>
+              <span class="mval">{{ chipsLastSync }}</span>
+            </div>
+            <template v-if="chipsStatus && chipsStatus.status !== 'never'">
+              <div class="meta-row">
+                <span class="mkey">成功 / 總計</span>
+                <span class="mval">{{ chipsStatus.success ?? 0 }} / {{ chipsStatus.total ?? 0 }}</span>
+              </div>
+              <div class="meta-row">
+                <span class="mkey">目前進度</span>
+                <span class="mval">{{ chipsProgressLabel }}（{{ chipsProgressPct }}%）</span>
+              </div>
+            </template>
+            <div class="meta-row">
+              <span class="mkey">下次排程</span>
+              <span class="mval">{{ chipsNextRun }}（週六自動）</span>
+            </div>
+            <div v-if="chipsStatus && chipsStatus.status !== 'running' && chipsStatus.status !== 'never'" class="meta-row">
+              <span class="mkey">完成時間</span>
+              <span class="mval">{{ chipsCompletedAt }}</span>
+            </div>
+          </div>
+
+          <div v-if="chipsStatus?.status === 'running'" class="chips-progress">
+            <div class="cp-track">
+              <div class="cp-fill" :style="{ width: `${chipsProgressPct}%` }" />
+            </div>
+            <p class="cp-text">{{ chipsStatus?.message || '爬取進行中…' }}</p>
+          </div>
+
+          <div v-else-if="chipsStatus?.status === 'completed'" class="chips-result chips-result-ok">
+            <span class="cr-label">完成摘要</span>
+            <span class="cr-value">成功 {{ chipsStatus?.success ?? 0 }} 檔，失敗 {{ chipsStatus?.fail ?? 0 }} 檔</span>
+          </div>
+          <div v-else-if="chipsStatus?.status === 'failed'" class="chips-result chips-result-fail">
+            <span class="cr-label">失敗原因</span>
+            <span class="cr-value">{{ chipsFailureDetail }}</span>
+          </div>
+
+          <div class="chips-actions">
+            <button
+              class="action-btn"
+              :class="{ busy: chipsTriggering || chipsStatus?.status === 'running' }"
+              :disabled="chipsTriggering || chipsStatus?.status === 'running'"
+              @click="triggerChips"
+            >{{ chipsTriggering || chipsStatus?.status === 'running' ? '爬取中…' : '手動觸發爬取' }}</button>
+
+            <div v-if="chipsShouldShowSecondaryActions" class="sec-row">
+              <button
+                v-if="chipsCanRetry"
+                class="sec-btn sec-retry"
+                :disabled="chipsTriggering || chipsStatus?.status === 'running'"
+                @click="triggerChips"
+              >再試一次</button>
+              <NuxtLink to="/stocks" class="sec-btn sec-link">查看股票列表</NuxtLink>
+            </div>
+          </div>
+
+          <p v-if="chipsError" class="chips-err">{{ chipsError }}</p>
+        </article>
+
+      </div>
+    </main>
+
   </div>
 </template>
 
 <style scoped>
-/* ── Design Tokens — defined on .page so scoped CSS can resolve them ── */
+/* ═══════════════════════════════════════
+   Design Tokens
+═══════════════════════════════════════ */
 .page {
-  --bg:    oklch(14.5% 0.016 258);
-  --s1:    oklch(19%   0.018 258);
-  --s2:    oklch(23%   0.018 258);
-  --line:  oklch(28%   0.020 258);
-  --line2: oklch(36%   0.020 258);
-  --t1:    oklch(97%   0.006 82);
-  --t2:    oklch(78%   0.012 258);
-  --t3:    oklch(58%   0.014 258);
-  --gold:  oklch(76%   0.095 80);
-  --up:    oklch(59%   0.18  22);
-  --dn:    oklch(62%   0.17  148);
-  --warn:  oklch(72%   0.13  72);
-  --font:  'DM Sans', system-ui, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  /* Dark (default — OLED-inspired) */
+  --bg:    oklch(9.5%  0.018 256);
+  --s1:    oklch(13%   0.020 257);
+  --s2:    oklch(16.5% 0.022 258);
+  --s3:    oklch(21%   0.024 258);
+  --line:  oklch(22%   0.023 258);
+  --line2: oklch(33%   0.023 258);
+
+  --blue:  oklch(63%   0.20  264);
+  --blue2: oklch(42%   0.17  264);
+  --gold:  oklch(76%   0.13  82);
+
+  --t1:    oklch(96%   0.006 218);
+  --t2:    oklch(72%   0.013 240);
+  --t3:    oklch(50%   0.012 240);
+
+  --up:    oklch(62%   0.18  22);
+  --dn:    oklch(64%   0.18  148);
+  --warn:  oklch(73%   0.13  72);
+
+  --radius: 18px;
+  --font:   'DM Sans', system-ui, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  --mono:   'Fira Code', 'JetBrains Mono', ui-monospace, monospace;
 
   min-height: 100vh;
   background: var(--bg);
   color: var(--t1);
   font-family: var(--font);
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
-  box-sizing: border-box;
 }
 
 .page *, .page *::before, .page *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* ── Light Mode Overrides ──────────────── */
+/* Light Mode */
 .page.light {
+  --bg:    oklch(96.5% 0.009 220);
+  --s1:    oklch(100%  0     0);
+  --s2:    oklch(97%   0.010 220);
+  --s3:    oklch(92%   0.014 220);
+  --line:  oklch(88%   0.012 220);
+  --line2: oklch(72%   0.015 240);
+  --blue:  oklch(47%   0.21  264);
+  --blue2: oklch(36%   0.17  264);
+  --gold:  oklch(52%   0.16  72);
+  --t1:    oklch(10%   0.018 256);
+  --t2:    oklch(35%   0.016 240);
+  --t3:    oklch(57%   0.012 240);
+  --up:    oklch(44%   0.22  22);
+  --dn:    oklch(38%   0.20  148);
+  --warn:  oklch(50%   0.16  72);
+}
+
+/* Classic Mode — Original Dark tokens */
+.page.classic {
+  --bg:    oklch(14.5% 0.016 258);
+  --s1:    oklch(19%   0.018 258);
+  --s2:    oklch(23%   0.018 258);
+  --s3:    oklch(27%   0.020 258);
+  --line:  oklch(28%   0.020 258);
+  --line2: oklch(36%   0.020 258);
+  --blue:  oklch(56%   0.20  264);
+  --blue2: oklch(40%   0.17  264);
+  --gold:  oklch(76%   0.095 80);
+  --t1:    oklch(97%   0.006 82);
+  --t2:    oklch(78%   0.012 258);
+  --t3:    oklch(58%   0.014 258);
+  --up:    oklch(59%   0.18  22);
+  --dn:    oklch(62%   0.17  148);
+  --warn:  oklch(72%   0.13  72);
+}
+
+.page.classic.light {
   --bg:    oklch(96.5% 0.007 82);
   --s1:    oklch(93%   0.008 82);
   --s2:    oklch(99%   0.004 82);
+  --s3:    oklch(90%   0.007 82);
   --line:  oklch(84%   0.012 258);
   --line2: oklch(68%   0.015 258);
+  --blue:  oklch(44%   0.21  264);
+  --blue2: oklch(34%   0.17  264);
+  --gold:  oklch(48%   0.13  60);
   --t1:    oklch(13%   0.020 258);
   --t2:    oklch(34%   0.016 258);
   --t3:    oklch(54%   0.014 258);
-  --gold:  oklch(48%   0.13  60);
   --up:    oklch(44%   0.21  22);
   --dn:    oklch(38%   0.19  148);
   --warn:  oklch(52%   0.14  72);
 }
 
-/* ── Site Header ───────────────────────── */
-.site-header {
-  background: var(--s1);
-  border-bottom: 1px solid var(--line);
+/* ═══════════════════════════════════════
+   Header
+═══════════════════════════════════════ */
+.header {
   position: sticky;
   top: 0;
   z-index: 50;
+  background: color-mix(in oklch, var(--s1) 85%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--line);
 }
 
-.site-header__inner {
-  max-width: 1200px;
+.header__inner {
+  max-width: 1240px;
   margin: 0 auto;
-  padding: 0 40px;
-  height: 54px;
+  padding: 0 32px;
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -619,10 +955,772 @@ function toggleTheme() {
 .brand {
   display: flex;
   align-items: center;
+  gap: 12px;
+}
+
+.brand-logo { flex-shrink: 0; line-height: 0; }
+
+.brand-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.brand-main {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--t1);
+  line-height: 1;
+}
+
+.brand-sub {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--t3);
+  line-height: 1;
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.api-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--t2);
+}
+
+.api-pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--t3);
+}
+
+.api-status--ok .api-pip  { background: var(--dn); box-shadow: 0 0 6px color-mix(in oklch, var(--dn) 70%, transparent); }
+.api-status--err .api-pip { background: var(--up); box-shadow: 0 0 6px color-mix(in oklch, var(--up) 70%, transparent); }
+
+.header-date {
+  font-size: 12px;
+  color: var(--t3);
+  font-variant-numeric: tabular-nums;
+}
+
+.btn-icon {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--t2);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  flex-shrink: 0;
+}
+.btn-icon:hover { background: var(--s3); border-color: var(--line2); color: var(--t1); }
+
+/* ═══════════════════════════════════════
+   Sync Bar
+═══════════════════════════════════════ */
+.sync-bar {
+  background: var(--s1);
+  border-bottom: 1px solid var(--line);
+  border-left: 3px solid var(--gold);
+}
+.sync-bar--error { border-left-color: var(--up); }
+.sync-bar--done  { border-left-color: var(--dn); }
+
+.sync-bar__inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 10px 32px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--t2);
+}
+
+.sync-bar__icon { font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.sb-ok  { color: var(--dn); }
+.sb-x   { color: var(--up); }
+.sb-spin { display: inline-block; animation: spin 1.4s linear infinite; }
+
+.sync-bar__msg { flex-shrink: 0; }
+
+.sync-bar__track {
+  flex: 1;
+  max-width: 200px;
+  height: 3px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.sync-bar__fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue), var(--gold));
+  border-radius: 2px;
+  transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.sync-bar--done .sync-bar__fill { background: var(--dn); }
+
+.sync-bar__pct {
+  font-size: 11.5px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--t3);
+  min-width: 34px;
+}
+
+.sync-bar__url {
+  font-size: 11px;
+  color: var(--t3);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+.sync-bar__url:hover { color: var(--blue); }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.slide-down-enter-from,
+.slide-down-leave-to { opacity: 0; transform: translateY(-6px); }
+
+/* ═══════════════════════════════════════
+   Main / Bento Grid
+═══════════════════════════════════════ */
+.main {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 32px 48px;
+}
+
+.bento {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
   gap: 14px;
 }
 
-.brand-badge {
+/* ═══════════════════════════════════════
+   Base Card
+═══════════════════════════════════════ */
+.card {
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 24px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.25s, box-shadow 0.25s;
+}
+
+.card:hover {
+  border-color: var(--line2);
+  box-shadow: 0 4px 24px color-mix(in oklch, var(--bg) 30%, transparent);
+}
+
+/* Card column spans */
+.card-overview { grid-column: span 2; min-height: 230px; }
+.card-status   { grid-column: span 1; }
+.card-jump     { grid-column: span 1; position: relative; }
+.card-sync     { grid-column: span 1; min-height: 200px; }
+.card-chips    { grid-column: span 2; }
+
+/* ─ Overview ─ */
+
+.overview-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 0 20px;
+}
+
+.num-block { position: relative; display: inline-flex; }
+
+.big-num {
+  font-family: var(--mono);
+  font-size: clamp(52px, 5.8vw, 76px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 0.9;
+  color: var(--t1);
+  font-variant-numeric: tabular-nums;
+  position: relative;
+  z-index: 1;
+}
+
+
+
+.num-label {
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--t3);
+  font-weight: 500;
+}
+
+/* ─ Jump card featured ─ */
+.card-jump {
+  border-color: color-mix(in oklch, var(--blue) 28%, var(--line));
+}
+
+.card-jump:hover {
+  border-color: color-mix(in oklch, var(--blue) 50%, var(--line));
+  box-shadow: 0 4px 20px color-mix(in oklch, var(--blue) 10%, transparent);
+}
+
+/* ─ Eyebrow ─ */
+.eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-bottom: 12px;
+}
+
+.eyebrow-blue { color: var(--blue); }
+
+/* ─ Card Title / Desc ─ */
+.card-title {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--t1);
+  margin-bottom: 9px;
+  line-height: 1.2;
+}
+
+.card-desc {
+  font-size: 13.5px;
+  color: var(--t2);
+  line-height: 1.7;
+  flex: 1;
+  margin-bottom: 18px;
+}
+
+/* ─ Meta rows ─ */
+.meta-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.chips-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.mkey {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--t3);
+  flex-shrink: 0;
+  min-width: 64px;
+}
+
+.mval {
+  font-size: 13.5px;
+  color: var(--t2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─ Link button ─ */
+.link-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--gold);
+  text-decoration: none;
+  transition: color 0.2s, gap 0.2s;
+  margin-top: auto;
+}
+
+.link-btn:hover { color: var(--t1); gap: 10px; }
+
+/* ─ Status card ─ */
+.status-list {
+  list-style: none;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.status-item:last-child { border-bottom: none; }
+
+.pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: box-shadow 0.3s;
+}
+
+.pip-ok   { background: var(--dn);   box-shadow: 0 0 7px color-mix(in oklch, var(--dn)   65%, transparent); }
+.pip-err  { background: var(--up);   box-shadow: 0 0 7px color-mix(in oklch, var(--up)   65%, transparent); }
+.pip-warn { background: var(--warn); box-shadow: 0 0 7px color-mix(in oklch, var(--warn) 60%, transparent); }
+.pip-busy { background: var(--gold); animation: pulse 1.5s ease-in-out infinite; }
+.pip-idle { background: var(--line2); }
+.pip-lg   { width: 9px; height: 9px; }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+.si-name { flex: 1; font-size: 14px; color: var(--t2); }
+
+.si-val {
+  font-size: 12.5px;
+  color: var(--t3);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─ Jump field ─ */
+.jump-wrap { position: relative; margin-top: auto; }
+
+.jump-field {
+  display: flex;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.jump-field:focus-within,
+.jump-field.active {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--blue) 18%, transparent);
+}
+
+.jump-input {
+  flex: 1;
+  padding: 11px 14px;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--mono);
+  font-size: 14.5px;
+  letter-spacing: 0.04em;
+  color: var(--t1);
+  font-variant-numeric: tabular-nums;
+}
+.jump-input::placeholder { color: var(--t3); font-family: var(--font); letter-spacing: 0; }
+
+.jump-go {
+  padding: 0 16px;
+  background: var(--blue);
+  color: oklch(98% 0.01 220);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.jump-go:hover { background: color-mix(in oklch, var(--blue) 80%, var(--t1)); }
+
+.suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--s2);
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  list-style: none;
+  z-index: 20;
+  overflow: hidden;
+  box-shadow: 0 8px 24px color-mix(in oklch, var(--bg) 50%, transparent);
+}
+
+.suggestion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--line);
+  transition: background 0.15s;
+}
+.suggestion:last-child { border-bottom: none; }
+.suggestion:hover { background: var(--s3); }
+
+.sug-sym {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 13.5px;
+  min-width: 48px;
+  color: var(--blue);
+  font-variant-numeric: tabular-nums;
+}
+.sug-name { font-size: 13px; color: var(--t2); }
+
+/* ─ Action button ─ */
+.action-btn {
+  align-self: flex-start;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 10px 22px;
+  background: transparent;
+  color: var(--t1);
+  border: 1px solid var(--line2);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
+  margin-top: auto;
+}
+
+.action-btn:hover:not(:disabled):not(.busy) {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: oklch(10% 0.02 80);
+  box-shadow: 0 2px 12px color-mix(in oklch, var(--gold) 35%, transparent);
+}
+
+.action-btn:disabled,
+.action-btn.busy { opacity: 0.35; cursor: not-allowed; }
+
+/* ─ Chips card ─ */
+.chips-badge {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+/* map to old classes used in :class binding */
+.chips-fresh-badge--ok    { border-color: var(--dn);    color: var(--dn); }
+.chips-fresh-badge--done  { border-color: color-mix(in oklch, var(--dn) 65%, var(--gold)); color: var(--dn); }
+.chips-fresh-badge--fail  { border-color: var(--up);    color: var(--up); }
+.chips-fresh-badge--stale { border-color: var(--line2); color: var(--t2); }
+
+.chips-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  background: color-mix(in oklch, var(--s2) 80%, transparent);
+  border-left: 2.5px solid var(--gold);
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 14px;
+}
+
+.chips-summary--done {
+  background: color-mix(in oklch, var(--dn) 8%, var(--s2));
+  border-left-color: var(--dn);
+}
+.chips-summary--fail {
+  background: color-mix(in oklch, var(--up) 8%, var(--s2));
+  border-left-color: var(--up);
+}
+
+.cs-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--t1);
+}
+
+.cs-text {
+  font-size: 12.5px;
+  color: var(--t2);
+  line-height: 1.6;
+}
+
+/* Chips progress */
+.chips-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.cp-track {
+  width: 100%;
+  height: 5px;
+  background: var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.cp-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue), var(--gold));
+  border-radius: 3px;
+  transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.cp-text {
+  font-size: 12px;
+  color: var(--t2);
+  line-height: 1.5;
+}
+
+/* Chips result */
+.chips-result {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.chips-result-ok   { border-color: color-mix(in oklch, var(--dn) 50%, var(--line)); background: color-mix(in oklch, var(--dn) 8%, var(--s2)); }
+.chips-result-fail { border-color: color-mix(in oklch, var(--up) 50%, var(--line)); background: color-mix(in oklch, var(--up) 8%, var(--s2)); }
+
+.cr-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+
+.cr-value {
+  font-size: 13px;
+  color: var(--t1);
+  line-height: 1.55;
+}
+
+/* Chips actions */
+.chips-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.sec-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sec-btn {
+  min-height: 32px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  cursor: pointer;
+  border-radius: 7px;
+  transition: all 0.2s;
+}
+
+.sec-retry {
+  border: 1px solid color-mix(in oklch, var(--dn) 55%, var(--line));
+  background: color-mix(in oklch, var(--dn) 8%, var(--s1));
+  color: var(--dn);
+}
+.sec-retry:hover:not(:disabled) {
+  border-color: var(--dn);
+  background: color-mix(in oklch, var(--dn) 14%, var(--s1));
+}
+.sec-retry:disabled { opacity: 0.4; cursor: default; }
+
+.sec-link {
+  border: 1px solid var(--line2);
+  background: transparent;
+  color: var(--t2);
+}
+.sec-link:hover { border-color: var(--gold); color: var(--gold); }
+
+.chips-err {
+  font-size: 12px;
+  color: var(--up);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* ═══════════════════════════════════════
+   Responsive
+═══════════════════════════════════════ */
+@media (max-width: 1024px) {
+  .header__inner,
+  .sync-bar__inner,
+  .main { padding-left: 20px; padding-right: 20px; }
+
+  .header-date { display: none; }
+
+  .bento { grid-template-columns: repeat(2, 1fr); }
+  .card-overview { grid-column: span 2; }
+  .card-chips    { grid-column: span 2; }
+
+  .big-num { font-size: 52px; }
+}
+
+@media (max-width: 600px) {
+  .bento { grid-template-columns: 1fr; gap: 10px; }
+  .card-overview,
+  .card-chips { grid-column: span 1; }
+
+  .main { padding: 16px 16px 32px; }
+
+  .card { padding: 18px 18px; }
+
+  .big-num { font-size: 44px; }
+
+  .sync-bar__track,
+  .sync-bar__url { display: none; }
+}
+
+/* ═══════════════════════════════════════
+   Settings Panel
+═══════════════════════════════════════ */
+.settings-wrap { position: relative; }
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+}
+
+.settings-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 100;
+  background: var(--s2);
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 196px;
+  box-shadow: 0 8px 32px oklch(0% 0 0 / 0.28);
+}
+
+.sp-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-bottom: 12px;
+}
+
+.sp-group { margin-bottom: 12px; }
+.sp-group:last-child { margin-bottom: 0; }
+
+.sp-label {
+  font-size: 10.5px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-bottom: 6px;
+}
+
+.sp-btns { display: flex; gap: 6px; }
+
+.sp-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 8px;
+  background: transparent;
+  border: 1px solid var(--line2);
+  border-radius: 7px;
+  color: var(--t2);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.sp-btn:hover { border-color: var(--t2); color: var(--t1); }
+.sp-btn.active {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: oklch(97% 0.01 220);
+}
+
+/* ── Classic structural overrides ───────────────────────────── */
+.page.classic .bento { gap: 2px; background: var(--line); border-radius: 4px; }
+.page.classic .card { border-radius: 4px; box-shadow: none; border-color: var(--line); }
+.page.classic .card:hover { box-shadow: none; border-color: var(--line2); }
+.page.classic .card-jump { border-radius: 4px; }
+.page.classic .jump-field { border-radius: 4px; }
+.page.classic .jump-go { border-radius: 0 4px 4px 0; }
+.page.classic .action-btn { border-radius: 4px; }
+.page.classic .sync-bar__track { border-radius: 4px; }
+.page.classic .sync-bar__fill { border-radius: 4px; }
+
+/* ── Classic Header ─────────────────────────────────────────── */
+.classic-header {
+  background: var(--s1);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.classic-header__inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 40px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.classic-brand { display: flex; align-items: center; gap: 14px; }
+.classic-badge {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -632,61 +1730,30 @@ function toggleTheme() {
   line-height: 1;
   flex-shrink: 0;
 }
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.brand-sub {
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--t3);
-  line-height: 1;
-}
-
-.brand-name {
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--t1);
-  line-height: 1;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-}
-
-.header-api {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
+.classic-brand-text { display: flex; flex-direction: column; gap: 2px; }
+.classic-brand-sub { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--t3); line-height: 1; }
+.classic-brand-name { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; color: var(--t1); line-height: 1; }
+.classic-header-right { display: flex; align-items: center; gap: 16px; }
+.classic-api-status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.classic-api--ok  .classic-pip { background: var(--dn); }
+.classic-api--err .classic-pip { background: var(--up); }
+.classic-pip { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.classic-date { font-size: 12px; color: var(--t3); font-variant-numeric: tabular-nums; }
+.classic-settings-btn {
+  background: none;
+  border: 1px solid var(--line2);
   color: var(--t2);
+  font-size: 14px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
 }
-
-.api-pip {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--t3);
-  flex-shrink: 0;
-}
-
-.header-api--ok  .api-pip { background: var(--dn); }
-.header-api--err .api-pip { background: var(--up); }
-
-.header-date {
-  font-size: 12.5px;
-  color: var(--t3);
-  font-variant-numeric: tabular-nums;
-}
-
-.theme-toggle {
+.classic-settings-btn:hover { border-color: var(--gold); color: var(--gold); }
+.classic-toggle-btn {
   background: none;
   border: 1px solid var(--line2);
   color: var(--t2);
@@ -698,92 +1765,19 @@ function toggleTheme() {
   justify-content: center;
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
-  line-height: 1;
-  padding: 0;
-  flex-shrink: 0;
 }
-.theme-toggle:hover { border-color: var(--gold); color: var(--gold); }
+.classic-toggle-btn:hover { border-color: var(--gold); color: var(--gold); }
 
-/* ── Sync Bar ──────────────────────────── */
-.sync-bar {
-  background: var(--s1);
-  border-bottom: 1px solid var(--line);
-  border-left: 2px solid var(--gold);
-}
-.sync-bar--error { border-left-color: var(--up); }
-.sync-bar--done  { border-left-color: var(--dn); }
+/* ════════════════════════════════════════
+   Classic Portal  ·  (v-if="isClassic")
+   ════════════════════════════════════════ */
 
-.sync-bar__inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 9px 40px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  font-size: 12px;
-  color: var(--t2);
-}
-
-.sync-bar__icon { font-size: 11px; font-weight: 700; flex-shrink: 0; }
-.sync-bar--done  .sync-bar__icon { color: var(--dn); }
-.sync-bar--error .sync-bar__icon { color: var(--up); }
-
-.sync-bar__msg { flex-shrink: 0; }
-
-.sync-bar__track {
-  flex: 1;
-  max-width: 180px;
-  height: 2px;
-  background: var(--line);
-}
-
-.sync-bar__fill {
-  height: 100%;
-  background: var(--gold);
-  transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1);
-}
-.sync-bar--done .sync-bar__fill { background: var(--dn); }
-
-.sync-bar__pct {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--t3);
-  min-width: 32px;
-}
-
-.sync-bar__url {
-  font-size: 10.5px;
-  color: var(--t3);
-  text-decoration: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 240px;
-}
-.sync-bar__url:hover { color: var(--gold); }
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-.syncing-spin { display: inline-block; animation: spin 1.4s linear infinite; }
-.spin-icon    { display: inline-block; animation: spin 1.4s linear infinite; color: var(--gold); }
-
-.slide-down-enter-active,
-.slide-down-leave-active {
-  transition: opacity 0.18s cubic-bezier(0.25, 1, 0.5, 1),
-              transform 0.18s cubic-bezier(0.25, 1, 0.5, 1);
-}
-.slide-down-enter-from,
-.slide-down-leave-to { opacity: 0; transform: translateY(-5px); }
-
-/* ── Portal ────────────────────────────── */
 .portal {
   max-width: 1200px;
   margin: 0 auto;
   padding: 28px 40px 0;
 }
 
-/* ── Card Grid ─────────────────────────── */
 .cards-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -792,11 +1786,20 @@ function toggleTheme() {
   border: 1px solid var(--line);
 }
 
-.card {
+/* reset bento card styles inside portal */
+.page.classic .portal .card {
   background: var(--s2);
   padding: 24px 28px;
   display: flex;
   flex-direction: column;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: none;
+}
+.page.classic .portal .card:hover {
+  box-shadow: none !important;
+  border: none;
+  transform: none;
 }
 
 .card--overview { grid-column: span 2; min-height: 220px; }
@@ -805,176 +1808,7 @@ function toggleTheme() {
 .card--lookup   { grid-column: span 2; position: relative; }
 .card--chips    { grid-column: span 2; }
 
-/* ── Chips card ─────────────────────────── */
-.chips-body {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin-bottom: 16px;
-}
-
-.chips-fresh-badge {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  font-size: 13.5px;
-  font-weight: 600;
-}
-
-.chips-fresh-badge--ok    { border-color: var(--dn);   color: var(--dn); }
-.chips-fresh-badge--done  { border-color: color-mix(in oklch, var(--dn) 70%, var(--gold)); color: var(--dn); }
-.chips-fresh-badge--fail  { border-color: var(--up);   color: var(--up); }
-.chips-fresh-badge--stale { border-color: var(--line2); color: var(--t2); }
-
-.pip--lg { width: 8px; height: 8px; }
-.pip--busy { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
-.pip--fail { background: var(--up); }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-
-.chips-summary {
-  display: grid;
-  gap: 5px;
-  padding: 12px 14px;
-  background: color-mix(in oklch, var(--s1) 76%, transparent);
-  border-left: 2px solid var(--gold);
-}
-
-.chips-summary--done {
-  background: color-mix(in oklch, var(--dn) 10%, var(--s1));
-  border-left-color: var(--dn);
-}
-
-.chips-summary--fail {
-  background: color-mix(in oklch, var(--up) 10%, var(--s1));
-  border-left-color: var(--up);
-}
-
-.chips-summary__title {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--t1);
-}
-
-.chips-summary__text {
-  font-size: 12.5px;
-  color: var(--t2);
-  line-height: 1.55;
-}
-
-.chips-err {
-  font-size: 12px;
-  color: var(--up);
-  margin-top: 8px;
-  line-height: 1.5;
-}
-
-.chips-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.chips-progress__track {
-  width: 100%;
-  height: 6px;
-  background: var(--line);
-  overflow: hidden;
-}
-
-.chips-progress__fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--gold), var(--dn));
-  transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1);
-}
-
-.chips-progress__text {
-  font-size: 12px;
-  color: var(--t2);
-  line-height: 1.5;
-}
-
-.chips-result {
-  display: grid;
-  gap: 6px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-}
-
-.chips-result--done {
-  border-color: color-mix(in oklch, var(--dn) 55%, var(--line));
-  background: color-mix(in oklch, var(--dn) 9%, var(--s1));
-}
-
-.chips-result--fail {
-  border-color: color-mix(in oklch, var(--up) 55%, var(--line));
-  background: color-mix(in oklch, var(--up) 9%, var(--s1));
-}
-
-.chips-result__label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--t3);
-}
-
-.chips-result__value {
-  font-size: 12.5px;
-  color: var(--t1);
-  line-height: 1.55;
-}
-
-.chips-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.chips-secondary {
-  min-height: 34px;
-  padding: 0 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-decoration: none;
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
-}
-
-.chips-secondary--retry {
-  border: 1px solid color-mix(in oklch, var(--dn) 60%, var(--line));
-  background: color-mix(in oklch, var(--dn) 9%, var(--s1));
-  color: var(--dn);
-}
-
-.chips-secondary--retry:hover:not(:disabled) {
-  border-color: var(--dn);
-  background: color-mix(in oklch, var(--dn) 14%, var(--s1));
-}
-
-.chips-secondary--retry:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.chips-secondary--link {
-  border: 1px solid var(--line2);
-  color: var(--t2);
-  background: transparent;
-}
-
-.chips-secondary--link:hover {
-  border-color: var(--gold);
-  color: var(--gold);
-}
-
+/* ─ Card Eyebrow / Title / Desc ─ */
 .card-eyebrow {
   font-size: 11px;
   font-weight: 600;
@@ -1000,7 +1834,7 @@ function toggleTheme() {
   margin-bottom: 20px;
 }
 
-/* Overview card */
+/* ─ Overview card ─ */
 .overview-body {
   display: flex;
   align-items: flex-end;
@@ -1034,7 +1868,12 @@ function toggleTheme() {
   padding-bottom: 4px;
 }
 
-.meta-row { display: flex; flex-direction: column; gap: 3px; }
+/* override bento .meta-row which is horizontal */
+.page.classic .portal .meta-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
 
 .meta-key {
   font-size: 11px;
@@ -1049,7 +1888,7 @@ function toggleTheme() {
   font-variant-numeric: tabular-nums;
 }
 
-/* Ghost button */
+/* ─ Ghost button ─ */
 .ghost-btn {
   align-self: flex-start;
   font-family: var(--font);
@@ -1069,73 +1908,25 @@ function toggleTheme() {
 }
 .ghost-btn:hover { color: var(--t1); }
 .ghost-btn:hover .ghost-btn__arr { transform: translateX(3px); }
-
 .ghost-btn__arr {
   font-size: 13px;
   transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
-/* Status card */
-.status-list {
-  list-style: none;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
+/* ─ Status card ─ (names unique to classic, no conflict) */
+.status-name { flex: 1; color: var(--t2); font-size: 14.5px; }
+.status-val  { font-size: 13px; color: var(--t3); font-variant-numeric: tabular-nums; }
 
-.status-item {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 13px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 15px;
-}
-.status-item:last-child { border-bottom: none; }
-
-.pip {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
+/* ─ Pip double-hyphen variants (unique to classic portal) ─ */
 .pip--ok   { background: var(--dn); }
 .pip--err  { background: var(--up); }
 .pip--warn { background: var(--warn); }
-.pip--busy { background: var(--gold); }
+.pip--busy { background: var(--gold); animation: pulse 1.5s ease-in-out infinite; }
 .pip--idle { background: var(--line2); }
+.pip--fail { background: var(--up); }
+.pip--lg   { width: 8px; height: 8px; }
 
-.status-name { flex: 1; color: var(--t2); font-size: 14.5px; }
-
-.status-val {
-  font-size: 13px;
-  color: var(--t3);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Action button */
-.action-btn {
-  align-self: flex-start;
-  font-family: var(--font);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  padding: 10px 22px;
-  background: transparent;
-  color: var(--t1);
-  border: 1px solid var(--line2);
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.action-btn:hover:not(:disabled):not(.action-btn--busy) {
-  background: var(--gold);
-  border-color: var(--gold);
-  color: var(--bg);
-}
-.action-btn:disabled,
-.action-btn--busy { opacity: 0.32; cursor: not-allowed; }
-
-/* Lookup card */
+/* ─ Lookup card ─ */
 .lookup-wrap { position: relative; }
 
 .lookup-field {
@@ -1198,37 +1989,114 @@ function toggleTheme() {
 .suggestion:last-child { border-bottom: none; }
 .suggestion:hover { background: var(--line); }
 
-.sug-sym {
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  min-width: 50px;
-  color: var(--gold);
-}
+.sug-sym  { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 50px; color: var(--gold); }
 .sug-name { color: var(--t2); }
 
-/* ── RWD ───────────────────────────────── */
+/* ─ Chips card ─ */
+.chips-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.chips-fresh-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.chips-fresh-badge--ok    { border-color: var(--dn);    color: var(--dn); }
+.chips-fresh-badge--done  { border-color: color-mix(in oklch, var(--dn) 70%, var(--gold)); color: var(--dn); }
+.chips-fresh-badge--fail  { border-color: var(--up);    color: var(--up); }
+.chips-fresh-badge--stale { border-color: var(--line2); color: var(--t2); }
+
+.chips-summary {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  background: color-mix(in oklch, var(--s1) 76%, transparent);
+  border-left: 2px solid var(--gold);
+}
+.chips-summary--done { background: color-mix(in oklch, var(--dn) 10%, var(--s1)); border-left-color: var(--dn); }
+.chips-summary--fail { background: color-mix(in oklch, var(--up) 10%, var(--s1)); border-left-color: var(--up); }
+.chips-summary__title { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; color: var(--t1); }
+.chips-summary__text  { font-size: 12.5px; color: var(--t2); line-height: 1.55; }
+
+.chips-meta { display: flex; flex-direction: column; gap: 6px; }
+
+.chips-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chips-progress__track {
+  width: 100%;
+  height: 6px;
+  background: var(--line);
+  overflow: hidden;
+}
+.chips-progress__fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold), var(--dn));
+  transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.chips-progress__text { font-size: 12px; color: var(--t2); line-height: 1.5; }
+
+.chips-result {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+}
+.chips-result--done { border-color: color-mix(in oklch, var(--dn) 55%, var(--line)); background: color-mix(in oklch, var(--dn) 9%, var(--s1)); }
+.chips-result--fail { border-color: color-mix(in oklch, var(--up) 55%, var(--line)); background: color-mix(in oklch, var(--up) 9%, var(--s1)); }
+.chips-result__label { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--t3); }
+.chips-result__value { font-size: 12.5px; color: var(--t1); line-height: 1.55; }
+
+.chips-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.chips-secondary {
+  min-height: 34px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.chips-secondary--retry {
+  border: 1px solid color-mix(in oklch, var(--dn) 60%, var(--line));
+  background: color-mix(in oklch, var(--dn) 9%, var(--s1));
+  color: var(--dn);
+}
+.chips-secondary--retry:hover:not(:disabled) { border-color: var(--dn); background: color-mix(in oklch, var(--dn) 14%, var(--s1)); }
+.chips-secondary--retry:disabled { opacity: 0.45; cursor: default; }
+.chips-secondary--link { border: 1px solid var(--line2); color: var(--t2); background: transparent; }
+.chips-secondary--link:hover { border-color: var(--gold); color: var(--gold); }
+
+.chips-err { font-size: 12px; color: var(--up); margin-top: 8px; line-height: 1.5; }
+
+/* ─ Classic Portal RWD ─ */
 @media (max-width: 960px) {
-  .site-header__inner,
-  .sync-bar__inner { padding-left: 16px; padding-right: 16px; }
-
-  .portal      { padding: 16px 16px 0; }
-
-  .header-date { display: none; }
-
+  .portal { padding: 16px 16px 0; }
   .cards-grid { grid-template-columns: repeat(2, 1fr); }
-  .card--overview { grid-column: span 2; }
-  .card--status   { grid-column: span 2; }
-  .card--action   { grid-column: span 1; }
-  .card--lookup   { grid-column: span 2; }
-  .card--chips    { grid-column: span 2; }
-
-  .card { padding: 18px 18px; }
-
+  .card--overview,
+  .card--status,
+  .card--lookup,
+  .card--chips  { grid-column: span 2; }
+  .card--action { grid-column: span 1; }
+  .page.classic .portal .card { padding: 18px; }
   .big-num { font-size: 48px; }
   .overview-body { flex-direction: column; align-items: flex-start; gap: 16px; padding-bottom: 16px; }
-
-  .sync-bar__track,
-  .sync-bar__url { display: none; }
 }
 
 @media (max-width: 520px) {
@@ -1236,11 +2104,10 @@ function toggleTheme() {
   .card--overview,
   .card--status,
   .card--lookup,
-  .card--chips { grid-column: span 1; }
-
-  .card { padding: 16px; }
+  .card--chips,
+  .card--action { grid-column: span 1; }
+  .page.classic .portal .card { padding: 16px; }
   .card--action { min-height: unset; }
-
   .big-num { font-size: 40px; }
 }
 </style>

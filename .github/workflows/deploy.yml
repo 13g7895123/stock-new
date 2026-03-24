@@ -1,0 +1,85 @@
+name: CD — Deploy to Production
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "部署環境"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - development
+
+# 避免同時多個 deploy job 執行
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.environment || 'production' }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 建立 CI 環境檔（提供給 docker build 階段驗證）──────
+      - name: Prepare env file for build check
+        run: cp docker/envs/.env.production.example docker/.env
+
+      # ── 驗證 Docker Compose 語法 ──────────────────────────
+      - name: Validate docker-compose config
+        working-directory: docker
+        run: docker compose config --quiet
+
+      # ── SSH 到伺服器執行 deploy.sh ─────────────────────────
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            set -euo pipefail
+
+            echo "── 進入專案目錄 ──"
+            cd ${{ secrets.DEPLOY_PATH }}
+
+            echo "── 拉取最新程式碼 ──"
+            git fetch --all
+            git reset --hard origin/${{ github.ref_name }}
+
+            echo "── 確認環境設定檔存在 ──"
+            if [[ ! -f "docker/envs/.env.${{ inputs.environment || 'production' }}" ]]; then
+              echo "❌ 找不到 docker/envs/.env.${{ inputs.environment || 'production' }}"
+              echo "   請在伺服器上建立此檔案"
+              exit 1
+            fi
+
+            echo "── 執行 deploy.sh ──"
+            bash scripts/deploy.sh ${{ inputs.environment || 'production' }}
+
+      # ── 部署結果通知（選用）──────────────────────────────
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ 部署成功！"
+          echo "  Branch: ${{ github.ref_name }}"
+          echo "  Commit: ${{ github.sha }}"
+          echo "  環境: ${{ inputs.environment || 'production' }}"
+
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "❌ 部署失敗！"
+          echo "  Branch: ${{ github.ref_name }}"
+          echo "  Commit: ${{ github.sha }}"
