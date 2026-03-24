@@ -74,12 +74,14 @@ async function triggerChips() {
     await refreshChips()
     startChipsPolling()
   } catch (err: unknown) {
-    const e = err as { response?: { status?: number }; message?: string }
+    const e = err as { response?: { status?: number; _data?: { error?: string } }; message?: string; data?: { error?: string } }
     if (e?.response?.status === 409) {
       chipsError.value = '已有爬取任務執行中'
       startChipsPolling()
+    } else if (e?.response?.status === 400) {
+      chipsError.value = e?.response?._data?.error || e?.data?.error || '目前沒有股票可爬，請先同步股票清單'
     } else {
-      chipsError.value = 'scraper 服務未啟動，請執行 docker compose up chips_scraper'
+      chipsError.value = e?.response?._data?.error || e?.data?.error || '籌碼作業啟動失敗，請查看 backend 日誌'
     }
   } finally {
     chipsTriggering.value = false
@@ -163,7 +165,7 @@ const chipsSummaryText = computed(() => {
     return chipsStatus.value?.message || '爬取程序中斷，請查看錯誤摘要後重新觸發。'
   }
   if (chipsStatus.value?.status === 'never') {
-    return '可手動觸發一次全量爬取，之後每週六也會自動執行。'
+    return '可手動觸發一次增量更新；若資料已齊全，系統會自動跳過不需重抓的股票。'
   }
   return '等待下一次手動或排程更新。'
 })
@@ -171,8 +173,9 @@ const chipsSummaryText = computed(() => {
 const chipsFailureDetail = computed(() => {
   if (chipsStatus.value?.status !== 'failed') return ''
   const msg = chipsStatus.value?.message?.trim() || ''
-  if (!msg) return '未提供細節，建議查看 chips_scraper 容器日誌。'
+  if (!msg) return '未提供細節，建議查看 backend 容器日誌。'
   if (msg.includes('scraper restarted')) return '爬蟲服務在任務完成前重啟，這次作業已中止。'
+  if (msg.includes('backend restarted')) return '後端服務在任務完成前重啟，這次作業已中止。'
   if (msg.includes('job failed:')) return msg.replace('job failed:', '').trim()
   return msg
 })

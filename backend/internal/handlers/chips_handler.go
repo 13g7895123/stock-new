@@ -1,14 +1,12 @@
 package handlers
 
 import (
-	"bytes"
-	"context"
-	"fmt"
 	"log"
 	"net/http"
-	"os"
+	"sync"
 	"time"
 
+	chipsrunner "stock-backend/internal/chips"
 	"stock-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -16,11 +14,27 @@ import (
 )
 
 type ChipsHandler struct {
-	db *gorm.DB
+	db     *gorm.DB
+	runner *chipsrunner.Runner
+}
+
+var (
+	chipsRunnerOnce sync.Once
+	chipsRunner     *chipsrunner.Runner
+)
+
+func getChipsRunner(db *gorm.DB) *chipsrunner.Runner {
+	chipsRunnerOnce.Do(func() {
+		chipsRunner = chipsrunner.NewRunner(db)
+		if err := chipsRunner.RecoverStaleJobs(); err != nil {
+			log.Printf("[chips] recover stale jobs failed: %v", err)
+		}
+	})
+	return chipsRunner
 }
 
 func NewChipsHandler(db *gorm.DB) *ChipsHandler {
-	return &ChipsHandler{db: db}
+	return &ChipsHandler{db: db, runner: getChipsRunner(db)}
 }
 
 // Status GET /api/chips/status
@@ -39,7 +53,7 @@ func (h *ChipsHandler) Status(c *gin.Context) {
 
 	// "fresh" = 本週六之後有成功完成的 job
 	lastSat := lastSaturday()
-	isFresh := job.Status == "completed" && job.StartedAt.After(lastSat)
+	isFresh := job.Status == "completed" && job.CompletedAt != nil && job.CompletedAt.After(lastSat)
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":           job.ID,
@@ -56,68 +70,38 @@ func (h *ChipsHandler) Status(c *gin.Context) {
 }
 
 // Trigger POST /api/chips/trigger
-// 手動觸發一次爬取（呼叫 scraper HTTP service）
+// 手動觸發一次爬取（由 Go backend 背景執行）
 func (h *ChipsHandler) Trigger(c *gin.Context) {
-	scraperURL := scraperBaseURL() + "/trigger"
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, scraperURL, bytes.NewBufferString("{}"))
+	total, err := h.runner.Trigger("")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build request"})
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("scraper unavailable: %v", err)})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusConflict {
-		c.JSON(http.StatusConflict, gin.H{"error": "scraper already running"})
+		if err == chipsrunner.ErrJobRunning {
+			c.JSON(http.StatusConflict, gin.H{"error": "scraper already running"})
+			return
+		}
+		if err == chipsrunner.ErrNoSymbols {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "total": total})
 }
 
 // TriggerCron 由後端 cron goroutine 呼叫（不走 HTTP）
 func TriggerCron(db *gorm.DB) {
-	scraperURL := scraperBaseURL() + "/trigger"
-
-	log.Printf("[chips-cron] 週六自動觸發籌碼爬取 → %s", scraperURL)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, scraperURL,
-		bytes.NewBufferString("{}"))
+	runner := getChipsRunner(db)
+	total, err := runner.Trigger("")
 	if err != nil {
-		log.Printf("[chips-cron] 建立 request 失敗: %v", err)
+		if err == chipsrunner.ErrJobRunning {
+			log.Printf("[chips-cron] 已有籌碼作業執行中，略過本次排程")
+			return
+		}
+		log.Printf("[chips-cron] 觸發失敗: %v", err)
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Printf("[chips-cron] 呼叫 scraper 失敗: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-	log.Printf("[chips-cron] scraper 回應 %d", resp.StatusCode)
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-func scraperBaseURL() string {
-	if u := os.Getenv("CHIPS_SCRAPER_URL"); u != "" {
-		return u
-	}
-	return "http://chips_scraper:5100"
+	log.Printf("[chips-cron] 已觸發 Go 籌碼爬取，共 %d 檔", total)
 }
 
 // lastSaturday 回傳上一個（或本）週六零時（Asia/Taipei）
