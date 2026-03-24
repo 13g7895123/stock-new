@@ -27,7 +27,7 @@ func NewChipsHandler(db *gorm.DB) *ChipsHandler {
 // 回傳最近一次籌碼爬取 job 的狀態，並計算是否為本週最新。
 func (h *ChipsHandler) Status(c *gin.Context) {
 	var job models.ChipsSyncJob
-	result := h.db.Order("started_at DESC").First(&job)
+	result := h.db.Order("id DESC").First(&job)
 	if result.Error != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"status":   "never",

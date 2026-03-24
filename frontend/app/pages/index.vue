@@ -43,24 +43,41 @@ interface ChipsStatus {
   total?: number
   success?: number
   fail?: number
+  message?: string
 }
 
 const { data: chipsStatus, refresh: refreshChips } = await useFetch<ChipsStatus>('/api/chips/status')
 
 const chipsTriggering = ref(false)
 const chipsError = ref('')
+let chipsPollTimer: ReturnType<typeof setInterval> | null = null
+
+function startChipsPolling() {
+  if (chipsPollTimer) return
+  chipsPollTimer = setInterval(() => {
+    refreshChips()
+  }, 3000)
+}
+
+function stopChipsPolling() {
+  if (!chipsPollTimer) return
+  clearInterval(chipsPollTimer)
+  chipsPollTimer = null
+}
+
 async function triggerChips() {
   if (chipsTriggering.value) return
   chipsTriggering.value = true
   chipsError.value = ''
   try {
     await $fetch('/api/chips/trigger', { method: 'POST' })
-    await new Promise(r => setTimeout(r, 1500))
     await refreshChips()
+    startChipsPolling()
   } catch (err: unknown) {
     const e = err as { response?: { status?: number }; message?: string }
     if (e?.response?.status === 409) {
       chipsError.value = '已有爬取任務執行中'
+      startChipsPolling()
     } else {
       chipsError.value = 'scraper 服務未啟動，請執行 docker compose up chips_scraper'
     }
@@ -69,17 +86,133 @@ async function triggerChips() {
   }
 }
 
+function formatChipsDate(value?: string, options?: Intl.DateTimeFormatOptions) {
+  if (!value) return '未知'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime()) || d.getFullYear() < 2000) return '未知'
+  return d.toLocaleDateString('zh-TW', options ?? {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
 const chipsLastSync = computed(() => {
   if (!chipsStatus.value || chipsStatus.value.status === 'never') return '從未爬取'
-  if (!chipsStatus.value.started_at) return '未知'
-  const d = new Date(chipsStatus.value.started_at)
-  return d.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' })
+  return formatChipsDate(chipsStatus.value.completed_at || chipsStatus.value.started_at)
 })
 
 const chipsNextRun = computed(() => {
   if (!chipsStatus.value?.next_run) return '—'
   const d = new Date(chipsStatus.value.next_run)
   return d.toLocaleDateString('zh-TW', { month: 'long', day: 'numeric', weekday: 'short' })
+})
+
+const chipsProcessed = computed(() =>
+  (chipsStatus.value?.success ?? 0) + (chipsStatus.value?.fail ?? 0)
+)
+
+const chipsProgressLabel = computed(() => {
+  const total = chipsStatus.value?.total ?? 0
+  if (!total) return '—'
+  return `${chipsProcessed.value} / ${total}`
+})
+
+const chipsProgressPct = computed(() => {
+  const total = chipsStatus.value?.total ?? 0
+  if (!total) return 0
+  return Math.min(100, Math.round((chipsProcessed.value / total) * 100))
+})
+
+const chipsBadgeClass = computed(() => {
+  if (chipsStatus.value?.is_fresh) return 'chips-fresh-badge--ok'
+  if (chipsStatus.value?.status === 'completed') return 'chips-fresh-badge--done'
+  if (chipsStatus.value?.status === 'failed') return 'chips-fresh-badge--fail'
+  return 'chips-fresh-badge--stale'
+})
+
+const chipsBadgeText = computed(() => {
+  if (chipsStatus.value?.is_fresh) return '本週資料已是最新'
+  if (chipsStatus.value?.status === 'running') return '爬取中…'
+  if (chipsStatus.value?.status === 'failed') return '本次爬取失敗'
+  if (chipsStatus.value?.status === 'completed') return '已完成，但資料未達本週最新'
+  if (chipsStatus.value?.status === 'never') return '尚未爬取'
+  return '資料已過期'
+})
+
+const chipsSummaryTitle = computed(() => {
+  if (chipsStatus.value?.status === 'running') return '正在回填籌碼資料'
+  if (chipsStatus.value?.status === 'completed') return '最近一次籌碼任務已完成'
+  if (chipsStatus.value?.status === 'failed') return '最近一次籌碼任務未完成'
+  if (chipsStatus.value?.status === 'never') return '尚未建立籌碼任務'
+  return '籌碼資料待更新'
+})
+
+const chipsSummaryText = computed(() => {
+  const total = chipsStatus.value?.total ?? 0
+  const success = chipsStatus.value?.success ?? 0
+  const fail = chipsStatus.value?.fail ?? 0
+
+  if (chipsStatus.value?.status === 'running') {
+    return chipsStatus.value?.message || `已處理 ${chipsProcessed.value} / ${total}`
+  }
+  if (chipsStatus.value?.status === 'completed') {
+    return `本次共處理 ${total} 檔，成功 ${success} 檔，失敗 ${fail} 檔。`
+  }
+  if (chipsStatus.value?.status === 'failed') {
+    return chipsStatus.value?.message || '爬取程序中斷，請查看錯誤摘要後重新觸發。'
+  }
+  if (chipsStatus.value?.status === 'never') {
+    return '可手動觸發一次全量爬取，之後每週六也會自動執行。'
+  }
+  return '等待下一次手動或排程更新。'
+})
+
+const chipsFailureDetail = computed(() => {
+  if (chipsStatus.value?.status !== 'failed') return ''
+  const msg = chipsStatus.value?.message?.trim() || ''
+  if (!msg) return '未提供細節，建議查看 chips_scraper 容器日誌。'
+  if (msg.includes('scraper restarted')) return '爬蟲服務在任務完成前重啟，這次作業已中止。'
+  if (msg.includes('job failed:')) return msg.replace('job failed:', '').trim()
+  return msg
+})
+
+const chipsCompletedAt = computed(() => {
+  if (!chipsStatus.value?.completed_at) return '—'
+  return formatChipsDate(chipsStatus.value.completed_at, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+})
+
+const chipsSummaryClass = computed(() => {
+  if (chipsStatus.value?.status === 'completed') return 'chips-summary--done'
+  if (chipsStatus.value?.status === 'failed') return 'chips-summary--fail'
+  return ''
+})
+
+const chipsCanRetry = computed(() =>
+  chipsStatus.value?.status === 'failed' || chipsStatus.value?.status === 'completed'
+)
+
+const chipsShouldShowSecondaryActions = computed(() =>
+  chipsStatus.value?.status === 'failed' || chipsStatus.value?.status === 'completed' || chipsStatus.value?.status === 'never'
+)
+
+watch(
+  () => chipsStatus.value?.status,
+  (status) => {
+    if (status === 'running') startChipsPolling()
+    else stopChipsPolling()
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  stopChipsPolling()
 })
 
 const syncing = ref(false)
@@ -341,9 +474,13 @@ function toggleTheme() {
         <article class="card card--chips">
           <p class="card-eyebrow">Chips Pyramid · 籌碼金字塔</p>
           <div class="chips-body">
-            <div class="chips-fresh-badge" :class="chipsStatus?.is_fresh ? 'chips-fresh-badge--ok' : 'chips-fresh-badge--stale'">
-              <span class="pip pip--lg" :class="chipsStatus?.is_fresh ? 'pip--ok' : (chipsStatus?.status === 'running' ? 'pip--busy' : 'pip--warn')" />
-              <span>{{ chipsStatus?.is_fresh ? '本週資料已是最新' : chipsStatus?.status === 'running' ? '爬取中…' : chipsStatus?.status === 'never' ? '尚未爬取' : '資料已過期' }}</span>
+            <div class="chips-fresh-badge" :class="chipsBadgeClass">
+              <span class="pip pip--lg" :class="chipsStatus?.is_fresh ? 'pip--ok' : (chipsStatus?.status === 'running' ? 'pip--busy' : chipsStatus?.status === 'failed' ? 'pip--fail' : 'pip--warn')" />
+              <span>{{ chipsBadgeText }}</span>
+            </div>
+            <div class="chips-summary" :class="chipsSummaryClass">
+              <p class="chips-summary__title">{{ chipsSummaryTitle }}</p>
+              <p class="chips-summary__text">{{ chipsSummaryText }}</p>
             </div>
             <div class="chips-meta">
               <div class="meta-row">
@@ -354,10 +491,45 @@ function toggleTheme() {
                 <span class="meta-key">成功 / 總計</span>
                 <span class="meta-val">{{ chipsStatus.success ?? 0 }} / {{ chipsStatus.total ?? 0 }}</span>
               </div>
+              <div v-if="chipsStatus && chipsStatus.status !== 'never'" class="meta-row">
+                <span class="meta-key">目前進度</span>
+                <span class="meta-val">{{ chipsProgressLabel }}（{{ chipsProgressPct }}%）</span>
+              </div>
               <div class="meta-row">
                 <span class="meta-key">下次排程</span>
                 <span class="meta-val">{{ chipsNextRun }}（週六自動）</span>
               </div>
+              <div v-if="chipsStatus && chipsStatus.status !== 'running' && chipsStatus.status !== 'never'" class="meta-row">
+                <span class="meta-key">完成時間</span>
+                <span class="meta-val">{{ chipsCompletedAt }}</span>
+              </div>
+            </div>
+            <div v-if="chipsStatus?.status === 'running'" class="chips-progress">
+              <div class="chips-progress__track">
+                <div class="chips-progress__fill" :style="{ width: `${chipsProgressPct}%` }" />
+              </div>
+              <p class="chips-progress__text">{{ chipsStatus?.message || '爬取進行中…' }}</p>
+            </div>
+            <div v-else-if="chipsStatus?.status === 'completed'" class="chips-result chips-result--done">
+              <span class="chips-result__label">完成摘要</span>
+              <span class="chips-result__value">成功 {{ chipsStatus?.success ?? 0 }} 檔，失敗 {{ chipsStatus?.fail ?? 0 }} 檔</span>
+            </div>
+            <div v-else-if="chipsStatus?.status === 'failed'" class="chips-result chips-result--fail">
+              <span class="chips-result__label">失敗原因</span>
+              <span class="chips-result__value">{{ chipsFailureDetail }}</span>
+            </div>
+            <div v-if="chipsShouldShowSecondaryActions" class="chips-actions">
+              <button
+                v-if="chipsCanRetry"
+                class="chips-secondary chips-secondary--retry"
+                :disabled="chipsTriggering || chipsStatus?.status === 'running'"
+                @click="triggerChips"
+              >
+                再試一次
+              </button>
+              <NuxtLink to="/stocks" class="chips-secondary chips-secondary--link">
+                查看股票列表
+              </NuxtLink>
             </div>
           </div>
           <button
@@ -649,17 +821,155 @@ function toggleTheme() {
 }
 
 .chips-fresh-badge--ok    { border-color: var(--dn);   color: var(--dn); }
+.chips-fresh-badge--done  { border-color: color-mix(in oklch, var(--dn) 70%, var(--gold)); color: var(--dn); }
+.chips-fresh-badge--fail  { border-color: var(--up);   color: var(--up); }
 .chips-fresh-badge--stale { border-color: var(--line2); color: var(--t2); }
 
 .pip--lg { width: 8px; height: 8px; }
 .pip--busy { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+.pip--fail { background: var(--up); }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+.chips-summary {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  background: color-mix(in oklch, var(--s1) 76%, transparent);
+  border-left: 2px solid var(--gold);
+}
+
+.chips-summary--done {
+  background: color-mix(in oklch, var(--dn) 10%, var(--s1));
+  border-left-color: var(--dn);
+}
+
+.chips-summary--fail {
+  background: color-mix(in oklch, var(--up) 10%, var(--s1));
+  border-left-color: var(--up);
+}
+
+.chips-summary__title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--t1);
+}
+
+.chips-summary__text {
+  font-size: 12.5px;
+  color: var(--t2);
+  line-height: 1.55;
+}
 
 .chips-err {
   font-size: 12px;
   color: var(--up);
   margin-top: 8px;
   line-height: 1.5;
+}
+
+.chips-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chips-progress__track {
+  width: 100%;
+  height: 6px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.chips-progress__fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold), var(--dn));
+  transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.chips-progress__text {
+  font-size: 12px;
+  color: var(--t2);
+  line-height: 1.5;
+}
+
+.chips-result {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+}
+
+.chips-result--done {
+  border-color: color-mix(in oklch, var(--dn) 55%, var(--line));
+  background: color-mix(in oklch, var(--dn) 9%, var(--s1));
+}
+
+.chips-result--fail {
+  border-color: color-mix(in oklch, var(--up) 55%, var(--line));
+  background: color-mix(in oklch, var(--up) 9%, var(--s1));
+}
+
+.chips-result__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+
+.chips-result__value {
+  font-size: 12.5px;
+  color: var(--t1);
+  line-height: 1.55;
+}
+
+.chips-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chips-secondary {
+  min-height: 34px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.chips-secondary--retry {
+  border: 1px solid color-mix(in oklch, var(--dn) 60%, var(--line));
+  background: color-mix(in oklch, var(--dn) 9%, var(--s1));
+  color: var(--dn);
+}
+
+.chips-secondary--retry:hover:not(:disabled) {
+  border-color: var(--dn);
+  background: color-mix(in oklch, var(--dn) 14%, var(--s1));
+}
+
+.chips-secondary--retry:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chips-secondary--link {
+  border: 1px solid var(--line2);
+  color: var(--t2);
+  background: transparent;
+}
+
+.chips-secondary--link:hover {
+  border-color: var(--gold);
+  color: var(--gold);
 }
 
 .card-eyebrow {

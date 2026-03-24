@@ -79,10 +79,22 @@ async def ensure_tables(pool: asyncpg.Pool):
     async with pool.acquire() as conn:
         await conn.execute(ENSURE_TABLES_SQL)
 
+async def recover_stale_jobs(pool: asyncpg.Pool):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE chips_sync_jobs
+               SET status = 'failed',
+                   completed_at = COALESCE(completed_at, NOW()),
+                   message = COALESCE(NULLIF(message, ''), 'scraper restarted before job completed')
+               WHERE status = 'running'"""
+        )
+
 async def create_job(pool: asyncpg.Pool, total: int) -> int:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "INSERT INTO chips_sync_jobs (status, total) VALUES ('running', $1) RETURNING id",
+            """INSERT INTO chips_sync_jobs (started_at, status, total, success, fail, message)
+               VALUES (NOW(), 'running', $1, 0, 0, '已啟動')
+               RETURNING id""",
             total,
         )
         return row["id"]
@@ -95,6 +107,15 @@ async def update_job(pool: asyncpg.Pool, job_id: int, **kwargs):
             f"UPDATE chips_sync_jobs SET {sets} WHERE id = $1",
             job_id, *vals,
         )
+
+async def update_job_progress(pool: asyncpg.Pool, job_id: int, success: int, fail: int, message: str | None = None):
+    fields = {
+        "success": success,
+        "fail": fail,
+    }
+    if message is not None:
+        fields["message"] = message
+    await update_job(pool, job_id, **fields)
 
 async def finish_job(pool: asyncpg.Pool, job_id: int, success: int, fail: int):
     async with pool.acquire() as conn:
@@ -115,10 +136,10 @@ async def fail_job(pool: asyncpg.Pool, job_id: int, msg: str):
         )
 
 async def get_symbols(pool: asyncpg.Pool) -> list[str]:
-    """取出所有 is_active 股票代碼（stock-new 的 stocks 資料表）"""
+    """取出目前 stocks 資料表中的有效股票代碼。"""
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT symbol FROM stocks WHERE is_active = true ORDER BY symbol"
+            "SELECT symbol FROM stocks WHERE symbol <> '' ORDER BY symbol"
         )
         return [r["symbol"] for r in rows]
 
@@ -260,26 +281,45 @@ async def run_scrape_job(pool: asyncpg.Pool, symbols: list[str]):
     sem = asyncio.Semaphore(CONCURRENCY)
     success = fail = 0
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=HEADLESS)
-        context = await browser.new_context(
-            locale="zh-TW",
-            extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
-        )
-        try:
-            tasks = [scrape_symbol(context, pool, job_id, s, sem) for s in symbols]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for r in results:
-                if r is True:
-                    success += 1
-                else:
-                    fail += 1
-        finally:
-            await context.close()
-            await browser.close()
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=HEADLESS)
+            context = await browser.new_context(
+                locale="zh-TW",
+                extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
+            )
+            try:
+                async def scrape_one(symbol: str) -> tuple[str, bool]:
+                    return symbol, await scrape_symbol(context, pool, job_id, symbol, sem)
 
-    await finish_job(pool, job_id, success, fail)
-    log.info(f"Job {job_id} 完成 success={success} fail={fail}")
+                tasks = [scrape_one(symbol) for symbol in symbols]
+                for task in asyncio.as_completed(tasks):
+                    symbol, result = await task
+                    if result is True:
+                        success += 1
+                    else:
+                        fail += 1
+
+                    processed = success + fail
+                    await update_job_progress(
+                        pool,
+                        job_id,
+                        success,
+                        fail,
+                        f"處理中 {processed}/{len(symbols)}：{symbol}",
+                    )
+            finally:
+                await context.close()
+                await browser.close()
+
+        await finish_job(pool, job_id, success, fail)
+        await update_job(pool, job_id, message=f"完成：成功 {success}，失敗 {fail}")
+        log.info(f"Job {job_id} 完成 success={success} fail={fail}")
+    except Exception as e:
+        msg = f"job failed: {e}"
+        log.error(msg)
+        log.error(traceback.format_exc())
+        await fail_job(pool, job_id, msg)
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 
@@ -291,6 +331,7 @@ async def get_db_pool() -> asyncpg.Pool:
     if _pool is None:
         _pool = await get_pool()
         await ensure_tables(_pool)
+        await recover_stale_jobs(_pool)
     return _pool
 
 async def handle_trigger(request: web.Request) -> web.Response:
@@ -322,7 +363,7 @@ async def handle_status(request: web.Request) -> web.Response:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """SELECT id, started_at, completed_at, status, total, success, fail, message
-               FROM chips_sync_jobs ORDER BY started_at DESC LIMIT 1"""
+               FROM chips_sync_jobs ORDER BY id DESC LIMIT 1"""
         )
     if not row:
         return web.json_response({"status": "never"})

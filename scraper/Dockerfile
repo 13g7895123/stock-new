@@ -1,18 +1,19 @@
 FROM python:3.12-slim
 
-# Playwright system deps
+# Playwright system deps (手動列出，避免 playwright install-deps 在 Debian Trixie 字型套件名稱不符)
 RUN apt-get update && apt-get install -y \
     libglib2.0-0 libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
     libcups2 libdrm2 libxcb1 libxkbcommon0 libx11-6 libxcomposite1 libxdamage1 \
     libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
-    libatspi2.0-0 wget curl gnupg \
+    libatspi2.0-0 libx11-xcb1 libxss1 libgtk-3-0 \
+    fonts-liberation fonts-noto-cjk \
+    wget curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
-    playwright install chromium && \
-    playwright install-deps chromium
+    playwright install chromium
 
 COPY . .
 
