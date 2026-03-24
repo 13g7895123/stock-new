@@ -258,8 +258,8 @@ func (h *ScraperHandler) RefreshStockSSE(c *gin.Context) {
 	}
 
 	writeSSE(c, sseEvent{
-		Stage:   "start",
-		Message: fmt.Sprintf("開始抓取 %s（%s）所有可用歷史資料...", symbol, stock.Market),
+		Stage:    "start",
+		Message:  fmt.Sprintf("開始抓取 %s（%s）所有可用歷史資料...", symbol, stock.Market),
 		Progress: 2,
 	})
 
@@ -283,8 +283,8 @@ func (h *ScraperHandler) RefreshStockSSE(c *gin.Context) {
 		if fetchErr != nil || len(records) == 0 {
 			emptyStreak++
 			writeSSE(c, sseEvent{
-				Stage:   "warning",
-				Message: fmt.Sprintf("%s/%s 無資料（連續空月 %d/%d）", symbol, ym, emptyStreak, maxEmptyStreak),
+				Stage:    "warning",
+				Message:  fmt.Sprintf("%s/%s 無資料（連續空月 %d/%d）", symbol, ym, emptyStreak, maxEmptyStreak),
 				Progress: 5,
 			})
 			if emptyStreak >= maxEmptyStreak {
@@ -297,11 +297,11 @@ func (h *ScraperHandler) RefreshStockSSE(c *gin.Context) {
 		all = append(all, records...)
 
 		writeSSE(c, sseEvent{
-			Stage:   "fetched",
-			Message: fmt.Sprintf("%s 取得 %d 筆，累計 %d 筆", ym, len(records), len(all)),
+			Stage:    "fetched",
+			Message:  fmt.Sprintf("%s 取得 %d 筆，累計 %d 筆", ym, len(records), len(all)),
 			Progress: 5,
-			Total:   len(records),
-			Synced:  len(all),
+			Total:    len(records),
+			Synced:   len(all),
 		})
 	}
 
@@ -311,10 +311,10 @@ func (h *ScraperHandler) RefreshStockSSE(c *gin.Context) {
 	}
 
 	writeSSE(c, sseEvent{
-		Stage:   "saving",
-		Message: fmt.Sprintf("共 %d 筆，寫入資料庫...", len(all)),
+		Stage:    "saving",
+		Message:  fmt.Sprintf("共 %d 筆，寫入資料庫...", len(all)),
 		Progress: 90,
-		Synced:  len(all),
+		Synced:   len(all),
 	})
 
 	result := h.db.Clauses(clause.OnConflict{
@@ -328,9 +328,9 @@ func (h *ScraperHandler) RefreshStockSSE(c *gin.Context) {
 	}
 
 	writeSSE(c, sseEvent{
-		Stage:   "done",
-		Message: fmt.Sprintf("%s 更新完成！共 %d 筆日K 資料", symbol, len(all)),
+		Stage:    "done",
+		Message:  fmt.Sprintf("%s 更新完成！共 %d 筆日K 資料", symbol, len(all)),
 		Progress: 100,
-		Synced:  len(all),
+		Synced:   len(all),
 	})
 }

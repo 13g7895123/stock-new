@@ -1,6 +1,0 @@
-# ⚠️  此檔案已廢棄
-#
-# CI 與 CD 已合併至 ci.yml，請勿在此新增邏輯。
-# 可安全刪除此檔案：
-#   git rm .github/workflows/deploy.yml
-
