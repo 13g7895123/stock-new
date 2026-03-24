@@ -46,8 +46,9 @@ push to master/main
 ## CD（deploy.yml）
 
 **觸發條件**
-- push 到 `master` 或 `main`
+- CI (`CI — Lint & Build`) 在 `master` 或 `main` 上**成功完成**後自動觸發
 - 手動觸發（`workflow_dispatch`），可選擇 `production` 或 `development`
+- CI 失敗時**不會**執行部署
 
 **執行環境**：GitHub Environment `production`（可在 Settings → Environments 設定 Protection rules）
 
