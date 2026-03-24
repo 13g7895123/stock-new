@@ -165,14 +165,14 @@ func FetchTWSEStockHistory(symbol, yyyymm string) ([]models.DailyPrice, error) {
 // ─────────────────────────────────────────────
 
 type tpexDayRecord struct {
-	Code     string `json:"SecuritiesCompanyCode"`
-	Close    string `json:"Close"`
-	Open     string `json:"Open"`
-	High     string `json:"High"`
-	Low      string `json:"Low"`
-	Volume   string `json:"TradingShares"` // 張數（千股）
-	TxValue  string `json:"Amount"`
-	TxCount  string `json:"TransactionRecord"`
+	Code    string `json:"SecuritiesCompanyCode"`
+	Close   string `json:"Close"`
+	Open    string `json:"Open"`
+	High    string `json:"High"`
+	Low     string `json:"Low"`
+	Volume  string `json:"TradingShares"` // 張數（千股）
+	TxValue string `json:"Amount"`
+	TxCount string `json:"TransactionRecord"`
 }
 
 // ─────────────────────────────────────────────

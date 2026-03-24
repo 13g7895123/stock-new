@@ -237,7 +237,7 @@ func latestTradingDay() time.Time {
 
 // RefreshStockSSE godoc
 // GET /api/scraper/prices/stock/:symbol
-// 抓取單支股票近 3 個月的日K 資料並更新資料庫，以 SSE 回傳進度
+// 從當月往回抓，直到連續 3 個月無資料為止，以 SSE 回傳進度
 func (h *ScraperHandler) RefreshStockSSE(c *gin.Context) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -258,52 +258,50 @@ func (h *ScraperHandler) RefreshStockSSE(c *gin.Context) {
 	}
 
 	writeSSE(c, sseEvent{
-		Stage:    "start",
-		Message:  fmt.Sprintf("開始更新 %s（%s）近 3 個月資料...", symbol, stock.Market),
-		Progress: 5,
+		Stage:   "start",
+		Message: fmt.Sprintf("開始抓取 %s（%s）所有可用歷史資料...", symbol, stock.Market),
+		Progress: 2,
 	})
 
-	// 計算近 3 個月的年月列表
 	now := time.Now().In(time.FixedZone("CST", 8*3600))
-	months := make([]string, 0, 3)
-	for i := 2; i >= 0; i-- {
-		t := now.AddDate(0, -i, 0)
-		months = append(months, fmt.Sprintf("%d%02d", t.Year(), t.Month()))
-	}
-
 	var all []models.DailyPrice
-	for idx, ym := range months {
-		progress := 10 + (idx+1)*25
-		writeSSE(c, sseEvent{
-			Stage:    "fetching",
-			Message:  fmt.Sprintf("抓取 %s/%s 資料中...", symbol, ym),
-			Progress: progress,
-		})
+	emptyStreak := 0
+	const maxEmptyStreak = 3 // 連續 3 個月無資料即停止
+
+	for i := 0; ; i++ {
+		t := now.AddDate(0, -i, 0)
+		ym := fmt.Sprintf("%d%02d", t.Year(), t.Month())
 
 		var records []models.DailyPrice
 		var fetchErr error
-
 		if stock.Market == "TWSE" {
 			records, fetchErr = scraper.FetchTWSEStockHistory(symbol, ym)
 		} else {
 			records, fetchErr = scraper.FetchTPEXStockHistory(symbol, ym)
 		}
 
-		if fetchErr != nil {
-			// 單月失敗不中止，繼續抓其他月份
+		if fetchErr != nil || len(records) == 0 {
+			emptyStreak++
 			writeSSE(c, sseEvent{
-				Stage:    "warning",
-				Message:  fmt.Sprintf("%s/%s 抓取失敗：%s，跳過", symbol, ym, fetchErr.Error()),
-				Progress: progress,
+				Stage:   "warning",
+				Message: fmt.Sprintf("%s/%s 無資料（連續空月 %d/%d）", symbol, ym, emptyStreak, maxEmptyStreak),
+				Progress: 5,
 			})
+			if emptyStreak >= maxEmptyStreak {
+				break
+			}
 			continue
 		}
+
+		emptyStreak = 0
 		all = append(all, records...)
+
 		writeSSE(c, sseEvent{
-			Stage:    "fetched",
-			Message:  fmt.Sprintf("%s/%s 取得 %d 筆", symbol, ym, len(records)),
-			Progress: progress + 5,
-			Total:    len(records),
+			Stage:   "fetched",
+			Message: fmt.Sprintf("%s 取得 %d 筆，累計 %d 筆", ym, len(records), len(all)),
+			Progress: 5,
+			Total:   len(records),
+			Synced:  len(all),
 		})
 	}
 
@@ -313,16 +311,16 @@ func (h *ScraperHandler) RefreshStockSSE(c *gin.Context) {
 	}
 
 	writeSSE(c, sseEvent{
-		Stage:    "saving",
-		Message:  fmt.Sprintf("共 %d 筆，寫入資料庫...", len(all)),
+		Stage:   "saving",
+		Message: fmt.Sprintf("共 %d 筆，寫入資料庫...", len(all)),
 		Progress: 90,
-		Synced:   len(all),
+		Synced:  len(all),
 	})
 
 	result := h.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "symbol"}, {Name: "date"}},
 		DoUpdates: clause.AssignmentColumns([]string{"open", "high", "low", "close", "volume", "tx_value", "tx_count"}),
-	}).CreateInBatches(&all, 200)
+	}).CreateInBatches(&all, 500)
 
 	if result.Error != nil {
 		writeSSE(c, sseEvent{Stage: "error", Error: result.Error.Error(), Progress: 90})
