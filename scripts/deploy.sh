@@ -41,6 +41,36 @@ if [[ ! -f "$SRC_ENV" ]]; then
   exit 1
 fi
 
+# ── 密碼安全性：若仍為預設值則自動替換 ───────────────────────
+gen_password() {
+  tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 8
+}
+
+rotate_if_default() {
+  local file="$1" key="$2"
+  local example_file="$ROOT_DIR/docker/envs/.env.$ENV.example"
+  local current_val example_val
+  current_val="$(grep -E "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)" || true
+  example_val="$(grep -E "^${key}=" "$example_file" 2>/dev/null | cut -d= -f2-)" || true
+  [[ -z "$current_val" ]] && return 0
+  [[ "$current_val" != "$example_val" ]] && return 0
+  local new_pass
+  new_pass="$(gen_password)"
+  sed -i "s|^${key}=.*|${key}=${new_pass}|" "$file"
+  echo "  🔑  ${key} 仍為預設值，已自動產生隨機密碼並寫入 $(basename "$file")"
+}
+
+PASSWORD_KEYS=("DB_PASS" "PGADMIN_PASSWORD")
+
+for KEY in "${PASSWORD_KEYS[@]}"; do
+  rotate_if_default "$SRC_ENV" "$KEY"
+done
+if [[ -f "$DOCKER_ENV" ]]; then
+  for KEY in "${PASSWORD_KEYS[@]}"; do
+    rotate_if_default "$DOCKER_ENV" "$KEY"
+  done
+fi
+
 echo ""
 echo "╔══════════════════════════════════════════════╗"
 echo "║              部署啟動                        ║"
