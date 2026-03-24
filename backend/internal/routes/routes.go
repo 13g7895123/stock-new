@@ -40,7 +40,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 	{
 		stocks := api.Group("/stocks")
 		{
-			stocks.GET("", tagHandler.ListStocks)         // 覆寫：支援 industry/tag_id/q 篩選 + Preload Tags
+			stocks.GET("", tagHandler.ListStocks) // 覆寫：支援 industry/tag_id/q 篩選 + Preload Tags
 			stocks.GET("/:symbol", stockHandler.GetBySymbol)
 			stocks.POST("", stockHandler.Create)
 			stocks.PUT("/:id", stockHandler.Update)
@@ -58,9 +58,9 @@ func Setup(db *gorm.DB) *gin.Engine {
 		// Tags CRUD
 		tags := api.Group("/tags")
 		{
-			tags.GET("",      tagHandler.List)
-			tags.POST("",     tagHandler.Create)
-			tags.PUT("/:id",  tagHandler.Update)
+			tags.GET("", tagHandler.List)
+			tags.POST("", tagHandler.Create)
+			tags.PUT("/:id", tagHandler.Update)
 			tags.DELETE("/:id", tagHandler.Delete)
 		}
 

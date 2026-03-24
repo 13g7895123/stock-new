@@ -120,7 +120,7 @@ func (h *TagHandler) SetStockTags(c *gin.Context) {
 
 // GET /api/stocks?industry=半導體&tag_id=1&q=台積電
 func (h *TagHandler) ListStocks(c *gin.Context) {
-	q        := c.Query("q")
+	q := c.Query("q")
 	industry := c.Query("industry")
 	tagIDStr := c.Query("tag_id")
 
