@@ -29,6 +29,7 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 		&models.ChipsSyncJob{},
 		&models.ChipsHolderSnapshot{},
 		&models.ChipsHolderDistribution{},
+		&models.PriceSyncJob{},
 	); err != nil {
 		return nil, err
 	}

@@ -216,7 +216,104 @@ watch(
 
 onBeforeUnmount(() => {
   stopChipsPolling()
+  stopPriceSyncPolling()
 })
+
+// ── 全股票歷史日K批次爬取 ──────────────────────────────
+interface PriceSyncStatus {
+  status: 'never' | 'running' | 'completed' | 'failed'
+  started_at?: string
+  completed_at?: string
+  total?: number
+  success?: number
+  fail?: number
+  message?: string
+}
+
+const { data: priceSyncStatus, refresh: refreshPriceSync } = await useFetch<PriceSyncStatus>('/api/scraper/prices/all/status')
+
+const priceSyncTriggering = ref(false)
+const priceSyncError = ref('')
+let priceSyncPollTimer: ReturnType<typeof setInterval> | null = null
+
+function startPriceSyncPolling() {
+  if (priceSyncPollTimer) return
+  priceSyncPollTimer = setInterval(() => { refreshPriceSync() }, 3000)
+}
+
+function stopPriceSyncPolling() {
+  if (!priceSyncPollTimer) return
+  clearInterval(priceSyncPollTimer)
+  priceSyncPollTimer = null
+}
+
+async function triggerPriceSync() {
+  if (priceSyncTriggering.value) return
+  priceSyncTriggering.value = true
+  priceSyncError.value = ''
+  try {
+    await $fetch('/api/scraper/prices/all/trigger', { method: 'POST' })
+    await refreshPriceSync()
+    startPriceSyncPolling()
+  } catch (err: unknown) {
+    const e = err as { response?: { status?: number; _data?: { error?: string } }; data?: { error?: string } }
+    if (e?.response?.status === 409) {
+      priceSyncError.value = '已有爬取作業執行中'
+      startPriceSyncPolling()
+    } else if (e?.response?.status === 400) {
+      priceSyncError.value = e?.response?._data?.error || e?.data?.error || '請先同步股票清單'
+    } else {
+      priceSyncError.value = e?.response?._data?.error || e?.data?.error || '啟動失敗，請查看後端日誌'
+    }
+  } finally {
+    priceSyncTriggering.value = false
+  }
+}
+
+const priceSyncProcessed = computed(() =>
+  (priceSyncStatus.value?.success ?? 0) + (priceSyncStatus.value?.fail ?? 0)
+)
+
+const priceSyncProgressPct = computed(() => {
+  const total = priceSyncStatus.value?.total ?? 0
+  if (!total) return 0
+  return Math.min(100, Math.round((priceSyncProcessed.value / total) * 100))
+})
+
+const priceSyncBadgeText = computed(() => {
+  const s = priceSyncStatus.value?.status
+  if (s === 'running') return '爬取中…'
+  if (s === 'completed') return '已完成'
+  if (s === 'failed') return '作業失敗'
+  return '尚未執行'
+})
+
+const priceSyncSummaryText = computed(() => {
+  const s = priceSyncStatus.value?.status
+  const total = priceSyncStatus.value?.total ?? 0
+  const success = priceSyncStatus.value?.success ?? 0
+  const fail = priceSyncStatus.value?.fail ?? 0
+  if (s === 'running') return priceSyncStatus.value?.message || `已處理 ${priceSyncProcessed.value} / ${total}`
+  if (s === 'completed') return `共處理 ${total} 檔，成功 ${success}，失敗 ${fail}。`
+  if (s === 'failed') return priceSyncStatus.value?.message || '作業中斷，請重新觸發。'
+  return '可手動觸發一次全量歷史日K回填，爬完所有股票的全部月份資料。'
+})
+
+const priceSyncCompletedAt = computed(() => {
+  if (!priceSyncStatus.value?.completed_at) return '—'
+  return new Date(priceSyncStatus.value.completed_at).toLocaleString('zh-TW', {
+    year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+})
+
+watch(
+  () => priceSyncStatus.value?.status,
+  (status) => {
+    if (status === 'running') startPriceSyncPolling()
+    else stopPriceSyncPolling()
+  },
+  { immediate: true },
+)
 
 const syncing = ref(false)
 const syncState = ref<SyncState | null>(null)
@@ -628,6 +725,64 @@ const settingsOpen = ref(false)
           <p v-if="chipsError" class="chips-err">⚠ {{ chipsError }}</p>
         </article>
 
+        <!-- Card 7: Price Sync All (2 cols) -->
+        <article class="card card--chips">
+          <p class="card-eyebrow">Full History Sync · 全量日K回填</p>
+          <div class="chips-body">
+            <div class="chips-fresh-badge" :class="{
+              'chips-fresh-badge--ok':    priceSyncStatus?.status === 'completed',
+              'chips-fresh-badge--stale': priceSyncStatus?.status === 'running',
+              'chips-fresh-badge--fail':  priceSyncStatus?.status === 'failed',
+            }">
+              <span class="pip pip--lg" :class="{
+                'pip--ok':   priceSyncStatus?.status === 'completed',
+                'pip--busy': priceSyncStatus?.status === 'running',
+                'pip--fail': priceSyncStatus?.status === 'failed',
+                'pip--warn': !priceSyncStatus || priceSyncStatus?.status === 'never',
+              }" />
+              <span>{{ priceSyncBadgeText }}</span>
+            </div>
+            <div class="chips-summary">
+              <p class="chips-summary__title">
+                <template v-if="priceSyncStatus?.status === 'running'">正在回填所有股票歷史日K</template>
+                <template v-else-if="priceSyncStatus?.status === 'completed'">上次全量回填已完成</template>
+                <template v-else-if="priceSyncStatus?.status === 'failed'">上次全量回填失敗</template>
+                <template v-else>尚未執行全量日K回填</template>
+              </p>
+              <p class="chips-summary__text">{{ priceSyncSummaryText }}</p>
+            </div>
+            <div class="chips-meta">
+              <template v-if="priceSyncStatus && priceSyncStatus.status !== 'never'">
+                <div class="meta-row">
+                  <span class="meta-key">成功 / 總計</span>
+                  <span class="meta-val">{{ priceSyncStatus.success ?? 0 }} / {{ priceSyncStatus.total ?? 0 }}</span>
+                </div>
+                <div class="meta-row">
+                  <span class="meta-key">目前進度</span>
+                  <span class="meta-val">{{ priceSyncProcessed }} / {{ priceSyncStatus.total ?? 0 }}（{{ priceSyncProgressPct }}%）</span>
+                </div>
+              </template>
+              <div v-if="priceSyncStatus && priceSyncStatus.status !== 'running' && priceSyncStatus.status !== 'never'" class="meta-row">
+                <span class="meta-key">完成時間</span>
+                <span class="meta-val">{{ priceSyncCompletedAt }}</span>
+              </div>
+            </div>
+            <div v-if="priceSyncStatus?.status === 'running'" class="chips-progress">
+              <div class="chips-progress__track">
+                <div class="chips-progress__fill" :style="{ width: `${priceSyncProgressPct}%` }" />
+              </div>
+              <p class="chips-progress__text">{{ priceSyncStatus?.message || '爬取進行中…' }}</p>
+            </div>
+          </div>
+          <button
+            class="action-btn"
+            :class="{ 'action-btn--busy': priceSyncTriggering || priceSyncStatus?.status === 'running' }"
+            :disabled="priceSyncTriggering || priceSyncStatus?.status === 'running'"
+            @click="triggerPriceSync"
+          >{{ priceSyncTriggering || priceSyncStatus?.status === 'running' ? '回填中…' : '全量歷史回填' }}</button>
+          <p v-if="priceSyncError" class="chips-err">⚠ {{ priceSyncError }}</p>
+        </article>
+
       </div>
     </section>
 
@@ -825,6 +980,77 @@ const settingsOpen = ref(false)
           </div>
 
           <p v-if="chipsError" class="chips-err">{{ chipsError }}</p>
+        </article>
+
+        <!-- ── Price Sync All (2 cols) ── -->
+        <article class="card card-chips">
+          <p class="eyebrow">Full History Sync · 全量日K回填</p>
+
+          <div class="chips-badge" :class="{
+            'chips-fresh-badge--ok':   priceSyncStatus?.status === 'completed',
+            'chips-fresh-badge--stale': priceSyncStatus?.status === 'running',
+            'chips-fresh-badge--fail': priceSyncStatus?.status === 'failed',
+          }">
+            <span class="pip pip-lg" :class="{
+              'pip-ok':   priceSyncStatus?.status === 'completed',
+              'pip-busy': priceSyncStatus?.status === 'running',
+              'pip-err':  priceSyncStatus?.status === 'failed',
+              'pip-warn': !priceSyncStatus || priceSyncStatus?.status === 'never',
+            }" />
+            {{ priceSyncBadgeText }}
+          </div>
+
+          <div class="chips-summary">
+            <p class="cs-title">
+              <template v-if="priceSyncStatus?.status === 'running'">正在回填所有股票歷史日K</template>
+              <template v-else-if="priceSyncStatus?.status === 'completed'">上次全量回填已完成</template>
+              <template v-else-if="priceSyncStatus?.status === 'failed'">上次全量回填失敗</template>
+              <template v-else>尚未執行全量日K回填</template>
+            </p>
+            <p class="cs-text">{{ priceSyncSummaryText }}</p>
+          </div>
+
+          <div class="chips-meta">
+            <template v-if="priceSyncStatus && priceSyncStatus.status !== 'never'">
+              <div class="meta-row">
+                <span class="mkey">成功 / 總計</span>
+                <span class="mval">{{ priceSyncStatus.success ?? 0 }} / {{ priceSyncStatus.total ?? 0 }}</span>
+              </div>
+              <div class="meta-row">
+                <span class="mkey">目前進度</span>
+                <span class="mval">{{ priceSyncProcessed }} / {{ priceSyncStatus.total ?? 0 }}（{{ priceSyncProgressPct }}%）</span>
+              </div>
+            </template>
+            <div v-if="priceSyncStatus && priceSyncStatus.status !== 'running' && priceSyncStatus.status !== 'never'" class="meta-row">
+              <span class="mkey">完成時間</span>
+              <span class="mval">{{ priceSyncCompletedAt }}</span>
+            </div>
+          </div>
+
+          <div v-if="priceSyncStatus?.status === 'running'" class="chips-progress">
+            <div class="cp-track">
+              <div class="cp-fill" :style="{ width: `${priceSyncProgressPct}%` }" />
+            </div>
+            <p class="cp-text">{{ priceSyncStatus?.message || '爬取進行中…' }}</p>
+          </div>
+
+          <div class="chips-actions">
+            <button
+              class="action-btn"
+              :class="{ busy: priceSyncTriggering || priceSyncStatus?.status === 'running' }"
+              :disabled="priceSyncTriggering || priceSyncStatus?.status === 'running'"
+              @click="triggerPriceSync"
+            >{{ priceSyncTriggering || priceSyncStatus?.status === 'running' ? '回填中…' : '全量歷史回填' }}</button>
+            <div v-if="priceSyncStatus?.status === 'completed' || priceSyncStatus?.status === 'failed'" class="sec-row">
+              <button
+                class="sec-btn sec-retry"
+                :disabled="priceSyncTriggering || priceSyncStatus?.status === 'running'"
+                @click="triggerPriceSync"
+              >再次執行</button>
+            </div>
+          </div>
+
+          <p v-if="priceSyncError" class="chips-err">{{ priceSyncError }}</p>
         </article>
 
       </div>

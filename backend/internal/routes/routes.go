@@ -35,6 +35,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 	priceHandler := handlers.NewPriceHandler(db)
 	chipsHandler := handlers.NewChipsHandler(db)
 	tagHandler := handlers.NewTagHandler(db)
+	priceSyncHandler := handlers.NewPriceSyncHandler(db)
 
 	api := r.Group("/api")
 	{
@@ -69,6 +70,9 @@ func Setup(db *gorm.DB) *gin.Engine {
 			scraperGroup.GET("/stocks", scraperHandler.SyncStocksSSE)
 			scraperGroup.GET("/prices", scraperHandler.SyncPricesSSE)
 			scraperGroup.GET("/prices/stock/:symbol", scraperHandler.RefreshStockSSE)
+			// 全股票歷史日K批次爬取
+			scraperGroup.GET("/prices/all/status", priceSyncHandler.Status)
+			scraperGroup.POST("/prices/all/trigger", priceSyncHandler.Trigger)
 		}
 
 		chips := api.Group("/chips")

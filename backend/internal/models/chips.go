@@ -43,3 +43,17 @@ type ChipsHolderDistribution struct {
 }
 
 func (ChipsHolderDistribution) TableName() string { return "chips_holder_distributions" }
+
+// PriceSyncJob 記錄每次「全股票所有歷史日K」批次爬取作業的狀態
+type PriceSyncJob struct {
+	ID          uint       `gorm:"primaryKey;autoIncrement" json:"id"`
+	StartedAt   time.Time  `json:"started_at"`
+	CompletedAt *time.Time `json:"completed_at"`
+	Status      string     `gorm:"default:running"         json:"status"` // running|completed|failed
+	Total       int        `json:"total"`
+	Success     int        `json:"success"`
+	Fail        int        `json:"fail"`
+	Message     string     `json:"message"`
+}
+
+func (PriceSyncJob) TableName() string { return "price_sync_jobs" }
