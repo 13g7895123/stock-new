@@ -73,12 +73,14 @@ func Setup(db *gorm.DB) *gin.Engine {
 			// 全股票歷史日K批次爬取
 			scraperGroup.GET("/prices/all/status", priceSyncHandler.Status)
 			scraperGroup.POST("/prices/all/trigger", priceSyncHandler.Trigger)
+			scraperGroup.POST("/prices/all/test", priceSyncHandler.TestSingle)
 		}
 
 		chips := api.Group("/chips")
 		{
 			chips.GET("/status", chipsHandler.Status)
 			chips.POST("/trigger", chipsHandler.Trigger)
+			chips.POST("/trigger-single", chipsHandler.TriggerSingle)
 		}
 	}
 

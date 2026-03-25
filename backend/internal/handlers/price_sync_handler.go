@@ -3,6 +3,8 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 
 	"stock-backend/internal/models"
@@ -78,4 +80,48 @@ func (h *PriceSyncHandler) Trigger(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "total": total})
+}
+
+var validSymbolRe = regexp.MustCompile(`^[1-9][0-9]{3}$`)
+
+// TestSingle POST /api/scraper/prices/all/test
+// body: {"symbol":"2330"}
+// 同步爬取單支股票全部歷史日K，直接回傳結果（用於測試診斷）
+func (h *PriceSyncHandler) TestSingle(c *gin.Context) {
+	var body struct {
+		Symbol string `json:"symbol"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "請求格式錯誤"})
+		return
+	}
+	symbol := strings.TrimSpace(strings.ToUpper(body.Symbol))
+	if !validSymbolRe.MatchString(symbol) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "股票代號格式不正確（需為四碼非零開頭，如 2330）"})
+		return
+	}
+
+	var stock models.Stock
+	if err := h.db.Where("symbol = ?", symbol).First(&stock).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "找不到此股票代號，請先執行同步股票清單"})
+		return
+	}
+
+	log.Printf("[price-sync] test single symbol=%s market=%s", stock.Symbol, stock.Market)
+	n, err := h.runner.FetchSingle(stock.Symbol, stock.Market)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"ok":     false,
+			"symbol": stock.Symbol,
+			"market": stock.Market,
+			"error":  err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok":      true,
+		"symbol":  stock.Symbol,
+		"market":  stock.Market,
+		"records": n,
+	})
 }

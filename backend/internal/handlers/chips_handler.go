@@ -3,6 +3,7 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -87,6 +88,35 @@ func (h *ChipsHandler) Trigger(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"ok": true, "total": total})
+}
+
+// TriggerSingle POST /api/chips/trigger-single
+// body: {"symbol":"2330"}
+// 觸發單支股票筌碼爬取，可用 /api/chips/status 追蹤進度
+func (h *ChipsHandler) TriggerSingle(c *gin.Context) {
+	var body struct {
+		Symbol string `json:"symbol"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "請求格式錯誤"})
+		return
+	}
+	symbol := strings.TrimSpace(strings.ToUpper(body.Symbol))
+	if symbol == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "需提供股票代號"})
+		return
+	}
+
+	total, err := h.runner.Trigger(symbol)
+	if err != nil {
+		if err == chipsrunner.ErrJobRunning {
+			c.JSON(http.StatusConflict, gin.H{"error": "已有爬取任務執行中"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "symbol": symbol, "total": total})
 }
 
 // TriggerCron 由後端 cron goroutine 呼叫（不走 HTTP）

@@ -321,6 +321,55 @@ watch(
   { immediate: true },
 )
 
+// ── 單股測試 ──────────────────────────────
+const testSymbolChips = ref('')
+const testingChips = ref(false)
+const testResultChips = ref<{ ok: boolean; symbol?: string; error?: string } | null>(null)
+
+async function testChipsSingle() {
+  const sym = testSymbolChips.value.trim().toUpperCase()
+  if (!sym) return
+  testingChips.value = true
+  testResultChips.value = null
+  try {
+    const res = await $fetch<{ ok: boolean; symbol: string }>('/api/chips/trigger-single', {
+      method: 'POST',
+      body: { symbol: sym },
+    })
+    testResultChips.value = res
+    await refreshChips()
+    startChipsPolling()
+  } catch (err: unknown) {
+    const e = err as { response?: { _data?: { error?: string } }; data?: { error?: string } }
+    testResultChips.value = { ok: false, error: e?.response?._data?.error || e?.data?.error || '觸發失敗' }
+  } finally {
+    testingChips.value = false
+  }
+}
+
+const testSymbolPrice = ref('')
+const testingPrice = ref(false)
+const testResultPrice = ref<{ ok: boolean; symbol?: string; market?: string; records?: number; error?: string } | null>(null)
+
+async function testPriceSingle() {
+  const sym = testSymbolPrice.value.trim().toUpperCase()
+  if (!sym) return
+  testingPrice.value = true
+  testResultPrice.value = null
+  try {
+    const res = await $fetch<{ ok: boolean; symbol: string; market: string; records: number }>('/api/scraper/prices/all/test', {
+      method: 'POST',
+      body: { symbol: sym },
+    })
+    testResultPrice.value = res
+  } catch (err: unknown) {
+    const e = err as { response?: { _data?: { error?: string } }; data?: { error?: string } }
+    testResultPrice.value = { ok: false, error: e?.response?._data?.error || e?.data?.error || '測試失敗' }
+  } finally {
+    testingPrice.value = false
+  }
+}
+
 const syncing = ref(false)
 const syncState = ref<SyncState | null>(null)
 const syncLabel = ref('')
@@ -729,6 +778,16 @@ const settingsOpen = ref(false)
               </NuxtLink>
             </div>
           </div>
+          <!-- 單股測試 -->
+          <div class="test-row">
+            <input v-model="testSymbolChips" class="test-input" type="text" placeholder="單股測試，如 2330" @keyup.enter="testChipsSingle" />
+            <button class="test-btn" :disabled="testingChips || !testSymbolChips" @click="testChipsSingle">
+              {{ testingChips ? '執行中…' : '測試' }}
+            </button>
+            <span v-if="testResultChips" class="test-result" :class="testResultChips.ok ? 'test-result--ok' : 'test-result--err'">
+              {{ testResultChips.ok ? `✓ ${testResultChips.symbol} 已觸發` : `✕ ${testResultChips.error}` }}
+            </span>
+          </div>
           <button
             class="action-btn"
             :class="{ 'action-btn--busy': chipsTriggering || chipsStatus?.status === 'running' }"
@@ -788,6 +847,16 @@ const settingsOpen = ref(false)
               </div>
               <p class="chips-progress__text">{{ priceSyncStatus?.message || '爬取進行中…' }}</p>
             </div>
+          </div>
+          <!-- 單股測試 -->
+          <div class="test-row">
+            <input v-model="testSymbolPrice" class="test-input" type="text" placeholder="單股測試，如 2330" @keyup.enter="testPriceSingle" />
+            <button class="test-btn" :disabled="testingPrice || !testSymbolPrice" @click="testPriceSingle">
+              {{ testingPrice ? '執行中…' : '測試' }}
+            </button>
+            <span v-if="testResultPrice" class="test-result" :class="testResultPrice.ok ? 'test-result--ok' : 'test-result--err'">
+              {{ testResultPrice.ok ? `✓ ${testResultPrice.symbol}（${testResultPrice.market}）寫入 ${testResultPrice.records} 筆` : `✕ ${testResultPrice.error}` }}
+            </span>
           </div>
           <button
             class="action-btn"
@@ -984,6 +1053,17 @@ const settingsOpen = ref(false)
             <span class="cr-value">{{ chipsFailureDetail }}</span>
           </div>
 
+          <!-- 單股測試 -->
+          <div class="test-row">
+            <input v-model="testSymbolChips" class="test-input" type="text" placeholder="單股測試，如 2330" @keyup.enter="testChipsSingle" />
+            <button class="test-btn" :disabled="testingChips || !testSymbolChips" @click="testChipsSingle">
+              {{ testingChips ? '執行中…' : '測試' }}
+            </button>
+            <span v-if="testResultChips" class="test-result" :class="testResultChips.ok ? 'test-result--ok' : 'test-result--err'">
+              {{ testResultChips.ok ? `✓ ${testResultChips.symbol} 已觸發` : `✕ ${testResultChips.error}` }}
+            </span>
+          </div>
+
           <div class="chips-actions">
             <button
               class="action-btn"
@@ -1056,6 +1136,17 @@ const settingsOpen = ref(false)
               <div class="cp-fill" :style="{ width: `${priceSyncProgressPct}%` }" />
             </div>
             <p class="cp-text">{{ priceSyncStatus?.message || '爬取進行中…' }}</p>
+          </div>
+
+          <!-- 單股測試 -->
+          <div class="test-row">
+            <input v-model="testSymbolPrice" class="test-input" type="text" placeholder="單股測試，如 2330" @keyup.enter="testPriceSingle" />
+            <button class="test-btn" :disabled="testingPrice || !testSymbolPrice" @click="testPriceSingle">
+              {{ testingPrice ? '執行中…' : '測試' }}
+            </button>
+            <span v-if="testResultPrice" class="test-result" :class="testResultPrice.ok ? 'test-result--ok' : 'test-result--err'">
+              {{ testResultPrice.ok ? `✓ ${testResultPrice.symbol}（${testResultPrice.market}）寫入 ${testResultPrice.records} 筆` : `✕ ${testResultPrice.error}` }}
+            </span>
           </div>
 
           <div class="chips-actions">
@@ -2360,4 +2451,59 @@ const settingsOpen = ref(false)
   .card--action { min-height: unset; }
   .big-num { font-size: 40px; }
 }
+
+/* ═══════════════════════════════════════
+   Test Row (單股測試)
+═══════════════════════════════════════ */
+.test-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.test-input {
+  flex: 1;
+  min-width: 110px;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--t1);
+  font-size: 12.5px;
+  font-family: var(--mono);
+  outline: none;
+  transition: border-color 0.2s;
+}
+.test-input:focus { border-color: var(--blue); }
+.test-input::placeholder { color: var(--t3); }
+
+.test-btn {
+  height: 30px;
+  padding: 0 14px;
+  background: var(--s3);
+  border: 1px solid var(--line2);
+  border-radius: 7px;
+  color: var(--t2);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.test-btn:hover:not(:disabled) { background: var(--blue2); border-color: var(--blue); color: var(--t1); }
+.test-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.test-result {
+  font-size: 12px;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.test-result--ok  { color: var(--dn); }
+.test-result--err { color: var(--up); }
 </style>

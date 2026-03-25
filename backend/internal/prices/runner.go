@@ -95,9 +95,10 @@ func (r *Runner) loadStocks() ([]stockInfo, error) {
 		Symbol string
 		Market string
 	}
+	// 只取四碼、非零開頭的一般股票（過濾 ETF、權證、特別股等）
 	if err := r.db.Model(&models.Stock{}).
 		Select("symbol, market").
-		Where("symbol <> ''").
+		Where("symbol ~ ?", `^[1-9][0-9]{3}$`).
 		Order("symbol ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -199,13 +200,15 @@ func (r *Runner) worker(jobs <-chan stockInfo, results chan<- fetchResult) {
 }
 
 // fetchAllHistory 從當月往回抓，連續 3 個月無資料即停止
+// 最多回溯 360 個月（30 年），每月請求間隔 120ms 避免觸發 TWSE/TPEX rate limit
 func (r *Runner) fetchAllHistory(s stockInfo) (int, error) {
 	now := time.Now().In(time.FixedZone("CST", 8*3600))
 	var all []models.DailyPrice
 	emptyStreak := 0
 	const maxEmptyStreak = 3
+	const maxMonths = 360 // 最多回溯 30 年
 
-	for i := 0; ; i++ {
+	for i := 0; i < maxMonths; i++ {
 		t := now.AddDate(0, -i, 0)
 		ym := fmt.Sprintf("%d%02d", t.Year(), t.Month())
 
@@ -218,15 +221,20 @@ func (r *Runner) fetchAllHistory(s stockInfo) (int, error) {
 		}
 
 		if fetchErr != nil || len(records) == 0 {
+			if fetchErr != nil {
+				log.Printf("[price-sync][%s] fetch %s error: %v", s.Symbol, ym, fetchErr)
+			}
 			emptyStreak++
 			if emptyStreak >= maxEmptyStreak {
 				break
 			}
+			time.Sleep(300 * time.Millisecond) // 錯誤後等稍長
 			continue
 		}
 
 		emptyStreak = 0
 		all = append(all, records...)
+		time.Sleep(120 * time.Millisecond) // 每月請求間隔，避免 rate limit
 	}
 
 	if len(all) == 0 {
@@ -242,6 +250,11 @@ func (r *Runner) fetchAllHistory(s stockInfo) (int, error) {
 		return 0, result.Error
 	}
 	return len(all), nil
+}
+
+// FetchSingle 同步爬取單支股票的全部歷史日K，用於測試或手動補抓
+func (r *Runner) FetchSingle(symbol, market string) (int, error) {
+	return r.fetchAllHistory(stockInfo{Symbol: symbol, Market: market})
 }
 
 func intEnv(key string, defaultVal int) int {

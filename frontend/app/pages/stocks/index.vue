@@ -153,7 +153,7 @@
                 :class="{ active: selectedIndustry === industry }"
                 @click="selectedIndustry = industry"
               >
-                {{ industry }}
+                {{ resolveIndustry(industry) }}
               </button>
             </li>
           </ul>
@@ -234,7 +234,7 @@
               </td>
               <td class="td-name">{{ stock.name }}</td>
               <td class="td-industry">
-                <span v-if="stock.industry" class="industry-pill">{{ stock.industry }}</span>
+                <span v-if="stock.industry" class="industry-pill">{{ resolveIndustry(stock.industry) }}</span>
                 <span v-else class="t3">—</span>
               </td>
               <td class="ra td-price">{{ stock.price > 0 ? stock.price.toFixed(2) : '—' }}</td>
@@ -328,6 +328,22 @@ const today = new Date().toLocaleDateString('zh-TW', {
 const searchQuery    = ref('')
 const selectedIndustry = ref('')
 const selectedTagId  = ref(0)
+
+// ── Industry Code → 中文對照 ───────────────────────────
+const industryMap: Record<string, string> = {
+  '01': '水泥工業', '02': '食品工業', '03': '塑膠工業', '04': '紡織纖維',
+  '05': '電機機械', '06': '電器電纜', '08': '化學工業', '09': '生技醫療業',
+  '10': '玻璃陶瓷', '11': '造紙工業', '12': '鋼鐵工業', '13': '橡膠工業',
+  '14': '汽車工業', '15': '電子工業', '16': '建材營造業', '17': '航運業',
+  '18': '觀光餐旅', '19': '金融業', '20': '貿易百貨業', '21': '綜合',
+  '22': '其他', '24': '油電燃氣業', '25': '半導體業', '26': '電腦及週邊設備業',
+  '27': '光電業', '28': '通信網路業', '29': '電子零組件業', '30': '電子通路業',
+  '31': '資訊服務業', '32': '其他電子業', '33': '文化創意業', '34': '農業科技業',
+  '35': '電子商務業', '36': '綠能環保', '37': '數位雲端', '38': '運動休閒', '39': '居家生活',
+}
+function resolveIndustry(code: string): string {
+  return industryMap[code] ?? code
+}
 
 // ── Industry List ──────────────────────────────────────────────
 const industries = ref<string[]>([])
