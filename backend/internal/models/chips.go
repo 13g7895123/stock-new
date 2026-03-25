@@ -18,11 +18,11 @@ func (ChipsSyncJob) TableName() string { return "chips_sync_jobs" }
 
 // ChipsHolderSnapshot 儲存單一股票某次資料日期的籌碼快照。
 type ChipsHolderSnapshot struct {
-	ID           uint                     `gorm:"primaryKey;autoIncrement" json:"id"`
-	JobID        uint                     `gorm:"index" json:"job_id"`
-	Symbol       string                   `gorm:"type:varchar(10);not null;uniqueIndex:idx_chips_symbol_date" json:"symbol"`
-	DataDate     time.Time                `gorm:"type:date;not null;uniqueIndex:idx_chips_symbol_date" json:"data_date"`
-	ScrapedAt    time.Time                `gorm:"not null" json:"scraped_at"`
+	ID            uint                      `gorm:"primaryKey;autoIncrement" json:"id"`
+	JobID         uint                      `gorm:"index" json:"job_id"`
+	Symbol        string                    `gorm:"type:varchar(10);not null;uniqueIndex:idx_chips_symbol_date" json:"symbol"`
+	DataDate      time.Time                 `gorm:"type:date;not null;uniqueIndex:idx_chips_symbol_date" json:"data_date"`
+	ScrapedAt     time.Time                 `gorm:"not null" json:"scraped_at"`
 	Distributions []ChipsHolderDistribution `gorm:"foreignKey:SnapshotID;constraint:OnDelete:CASCADE" json:"distributions,omitempty"`
 }
 

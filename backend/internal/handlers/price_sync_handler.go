@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"sync"
 
-	pricesrunner "stock-backend/internal/prices"
 	"stock-backend/internal/models"
+	pricesrunner "stock-backend/internal/prices"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
