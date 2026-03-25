@@ -26,23 +26,24 @@ func main() {
 
 	r := routes.Setup(db)
 
-	// ── 籌碼金字塔週排程：每週六 08:00 自動觸發爬取 ──
+	// ── 籌碼金字塔週排程：每週日 10:00 自動觸發爬取 ──
+	// （網站通常週六更新，週日 10:00 確保資料已發布）
 	go func() {
 		for {
 			now := time.Now()
-			// 下一個週六 08:00 (Asia/Taipei)
+			// 下一個週日 10:00 (Asia/Taipei)
 			loc, _ := time.LoadLocation("Asia/Taipei")
 			nowTaipei := now.In(loc)
-			daysUntilSat := (6 - int(nowTaipei.Weekday()) + 7) % 7
-			if daysUntilSat == 0 {
-				daysUntilSat = 7
+			daysUntilSun := (7 - int(nowTaipei.Weekday())) % 7
+			if daysUntilSun == 0 {
+				daysUntilSun = 7
 			}
-			nextSat := time.Date(
-				nowTaipei.Year(), nowTaipei.Month(), nowTaipei.Day()+daysUntilSat,
-				8, 0, 0, 0, loc,
+			nextSun := time.Date(
+				nowTaipei.Year(), nowTaipei.Month(), nowTaipei.Day()+daysUntilSun,
+				10, 0, 0, 0, loc,
 			)
-			sleep := nextSat.Sub(now)
-			log.Printf("[chips-cron] 下次自動爬取於 %s（%.1f 小時後）", nextSat.Format("2006-01-02 15:04"), sleep.Hours())
+			sleep := nextSun.Sub(now)
+			log.Printf("[chips-cron] 下次自動爬取於 %s（%.1f 小時後）", nextSun.Format("2006-01-02 15:04"), sleep.Hours())
 			time.Sleep(sleep)
 			handlers.TriggerCron(db)
 		}

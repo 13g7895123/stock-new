@@ -149,14 +149,22 @@ func (r *Runner) runJob(symbols []string) {
 
 	success := 0
 	fail := 0
+	const maxFailureSamples = 20
+	failureSamples := make([]string, 0, maxFailureSamples)
+
 	for processed := 1; processed <= len(symbols); processed++ {
 		result := <-results
 		if result.success {
 			success++
 		} else {
 			fail++
+			errMsg := "unknown error"
 			if result.err != nil {
-				log.Printf("[chips][%s] %v", result.symbol, result.err)
+				errMsg = result.err.Error()
+			}
+			log.Printf("[chips][%s] %v", result.symbol, errMsg)
+			if len(failureSamples) < maxFailureSamples {
+				failureSamples = append(failureSamples, fmt.Sprintf("%s: %s", result.symbol, errMsg))
 			}
 		}
 
@@ -171,11 +179,23 @@ func (r *Runner) runJob(symbols []string) {
 	}
 
 	completedAt := time.Now()
-	message := fmt.Sprintf("完成：成功 %d，失敗 %d", success, fail)
 	status := "completed"
 	if success == 0 && fail > 0 {
 		status = "failed"
 	}
+
+	// 組合最終 message：成功/失敗統計 + 失敗範例
+	message := fmt.Sprintf("完成：成功 %d，失敗 %d", success, fail)
+	if len(failureSamples) > 0 {
+		message += "\n\n失敗範例（前" + fmt.Sprintf("%d", len(failureSamples)) + "支）：\n"
+		for _, s := range failureSamples {
+			message += "• " + s + "\n"
+		}
+		if fail > len(failureSamples) {
+			message += fmt.Sprintf("…（共 %d 支失敗，常見原因：ETF/權證/特別股不在來源網站追蹤範圍內）", fail)
+		}
+	}
+
 	if err := r.db.Model(&models.ChipsSyncJob{}).
 		Where("id = ?", job.ID).
 		Updates(map[string]any{

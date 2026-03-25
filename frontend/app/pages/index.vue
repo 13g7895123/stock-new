@@ -159,7 +159,12 @@ const chipsSummaryText = computed(() => {
     return chipsStatus.value?.message || `已處理 ${chipsProcessed.value} / ${total}`
   }
   if (chipsStatus.value?.status === 'completed') {
-    return `本次共處理 ${total} 檔，成功 ${success} 檔，失敗 ${fail} 檔。`
+    // 有失敗時，額外顯示 message 中的失敗明細
+    const base = `本次共處理 ${total} 檔，成功 ${success} 檔，失敗 ${fail} 檔。`
+    if (fail > 0 && chipsStatus.value?.message?.includes('失敗範例')) {
+      return base + '\n' + chipsStatus.value.message.split('\n\n').slice(1).join('\n\n')
+    }
+    return base
   }
   if (chipsStatus.value?.status === 'failed') {
     return chipsStatus.value?.message || '爬取程序中斷，請查看錯誤摘要後重新觸發。'
@@ -177,6 +182,7 @@ const chipsFailureDetail = computed(() => {
   if (msg.includes('scraper restarted')) return '爬蟲服務在任務完成前重啟，這次作業已中止。'
   if (msg.includes('backend restarted')) return '後端服務在任務完成前重啟，這次作業已中止。'
   if (msg.includes('job failed:')) return msg.replace('job failed:', '').trim()
+  // 直接顯示 message（包含失敗明細）
   return msg
 })
 
@@ -679,7 +685,7 @@ const settingsOpen = ref(false)
               </div>
               <div class="meta-row">
                 <span class="meta-key">下次排程</span>
-                <span class="meta-val">{{ chipsNextRun }}（週六自動）</span>
+                <span class="meta-val">{{ chipsNextRun }}（週日自動）</span>
               </div>
               <div v-if="chipsStatus && chipsStatus.status !== 'running' && chipsStatus.status !== 'never'" class="meta-row">
                 <span class="meta-key">完成時間</span>
@@ -695,6 +701,15 @@ const settingsOpen = ref(false)
             <div v-else-if="chipsStatus?.status === 'completed'" class="chips-result chips-result--done">
               <span class="chips-result__label">完成摘要</span>
               <span class="chips-result__value">成功 {{ chipsStatus?.success ?? 0 }} 檔，失敗 {{ chipsStatus?.fail ?? 0 }} 檔</span>
+            </div>
+            <!-- 失敗明細區：Completed 且有失敗時顯示 -->
+            <div v-if="chipsStatus?.status === 'completed' && (chipsStatus?.fail ?? 0) > 0" class="chips-result chips-result--warn">
+              <span class="chips-result__label">失敗明細</span>
+              <span class="chips-result__value" style="white-space: pre-wrap; font-size: 0.8em; line-height: 1.6">{{
+                chipsStatus?.message?.includes('失敗範例')
+                  ? chipsStatus.message.split('\n\n').slice(1).join('\n\n').trim()
+                  : `常見原因：ETF/權證/特別股不在來源網站追蹤範圍內，屬正常現象。`
+              }}</span>
             </div>
             <div v-else-if="chipsStatus?.status === 'failed'" class="chips-result chips-result--fail">
               <span class="chips-result__label">失敗原因</span>
@@ -936,7 +951,7 @@ const settingsOpen = ref(false)
             </template>
             <div class="meta-row">
               <span class="mkey">下次排程</span>
-              <span class="mval">{{ chipsNextRun }}（週六自動）</span>
+              <span class="mval">{{ chipsNextRun }}（週日自動）</span>
             </div>
             <div v-if="chipsStatus && chipsStatus.status !== 'running' && chipsStatus.status !== 'never'" class="meta-row">
               <span class="mkey">完成時間</span>
@@ -954,6 +969,15 @@ const settingsOpen = ref(false)
           <div v-else-if="chipsStatus?.status === 'completed'" class="chips-result chips-result-ok">
             <span class="cr-label">完成摘要</span>
             <span class="cr-value">成功 {{ chipsStatus?.success ?? 0 }} 檔，失敗 {{ chipsStatus?.fail ?? 0 }} 檔</span>
+          </div>
+          <!-- 失敗明細：Completed 且有失敗時顯示 -->
+          <div v-if="chipsStatus?.status === 'completed' && (chipsStatus?.fail ?? 0) > 0" class="chips-result chips-result-warn">
+            <span class="cr-label">失敗明細</span>
+            <span class="cr-value" style="white-space: pre-wrap; font-size: 0.8em; line-height: 1.6">{{
+              chipsStatus?.message?.includes('失敗範例')
+                ? chipsStatus.message.split('\n\n').slice(1).join('\n\n').trim()
+                : `常見原因：ETF/權證/特別股不在來源網站追蹤範圍內，屬正常現象。`
+            }}</span>
           </div>
           <div v-else-if="chipsStatus?.status === 'failed'" class="chips-result chips-result-fail">
             <span class="cr-label">失敗原因</span>

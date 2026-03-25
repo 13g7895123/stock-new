@@ -46,14 +46,14 @@ func (h *ChipsHandler) Status(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status":   "never",
 			"is_fresh": false,
-			"next_run": nextSaturday().Format(time.RFC3339),
+			"next_run": nextSunday().Format(time.RFC3339),
 		})
 		return
 	}
 
-	// "fresh" = 本週六之後有成功完成的 job
-	lastSat := lastSaturday()
-	isFresh := job.Status == "completed" && job.CompletedAt != nil && job.CompletedAt.After(lastSat)
+	// "fresh" = 本週日之後有成功完成的 job
+	lastSun := lastSunday()
+	isFresh := job.Status == "completed" && job.CompletedAt != nil && job.CompletedAt.After(lastSun)
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":           job.ID,
@@ -65,7 +65,7 @@ func (h *ChipsHandler) Status(c *gin.Context) {
 		"fail":         job.Fail,
 		"message":      job.Message,
 		"is_fresh":     isFresh,
-		"next_run":     nextSaturday().Format(time.RFC3339),
+		"next_run":     nextSunday().Format(time.RFC3339),
 	})
 }
 
@@ -104,23 +104,24 @@ func TriggerCron(db *gorm.DB) {
 	log.Printf("[chips-cron] 已觸發 Go 籌碼爬取，共 %d 檔", total)
 }
 
-// lastSaturday 回傳上一個（或本）週六零時（Asia/Taipei）
-func lastSaturday() time.Time {
+// lastSunday 回傳上一個（或本）週日零時（Asia/Taipei）
+func lastSunday() time.Time {
 	loc, _ := time.LoadLocation("Asia/Taipei")
 	now := time.Now().In(loc)
-	daysSinceSat := int(now.Weekday()+1) % 7 // 週六 = 6 → 0 days ago
-	last := now.AddDate(0, 0, -daysSinceSat)
+	// Sunday = 0，daysSince = Weekday() % 7（Sunday=0 → 0 days ago）
+	daysSinceSun := int(now.Weekday())
+	last := now.AddDate(0, 0, -daysSinceSun)
 	return time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, loc)
 }
 
-// nextSaturday 回傳下一個週六零時
-func nextSaturday() time.Time {
+// nextSunday 回傳下一個週日 10:00（Asia/Taipei）
+func nextSunday() time.Time {
 	loc, _ := time.LoadLocation("Asia/Taipei")
 	now := time.Now().In(loc)
-	daysUntilSat := (6 - int(now.Weekday()) + 7) % 7
-	if daysUntilSat == 0 {
-		daysUntilSat = 7
+	daysUntilSun := (7 - int(now.Weekday())) % 7
+	if daysUntilSun == 0 {
+		daysUntilSun = 7
 	}
-	next := now.AddDate(0, 0, daysUntilSat)
-	return time.Date(next.Year(), next.Month(), next.Day(), 8, 0, 0, 0, loc)
+	next := now.AddDate(0, 0, daysUntilSun)
+	return time.Date(next.Year(), next.Month(), next.Day(), 10, 0, 0, 0, loc)
 }
