@@ -12,7 +12,7 @@ useHead({
 })
 
 // ── Tab ───────────────────────────────────────
-type ViewTab = 'stream' | 'raw'
+type ViewTab = 'stream' | 'raw' | 'broker'
 const activeTab = ref<ViewTab>('stream')
 
 // ── 型別 (SSE stream) ─────────────────────────
@@ -213,6 +213,50 @@ function fmtNum(n: number | undefined): string {
   if (n === undefined || n === null) return '—'
   return n.toLocaleString()
 }
+
+// ── 狀態 (券商 API 測試) ──────────────────────
+interface BrokerRecord {
+  symbol: string
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+interface BrokerFetchResp {
+  symbol: string
+  source: string
+  url: string
+  record_count: number
+  first_record?: BrokerRecord
+  last_record?: BrokerRecord
+  tried?: string[]
+  broker_urls: string[]
+  error?: string
+}
+
+const brokerSymbol  = ref('2330')
+const brokerLoading = ref(false)
+const brokerError   = ref('')
+const brokerData    = ref<BrokerFetchResp | null>(null)
+
+async function fetchBroker() {
+  const sym = brokerSymbol.value.trim().toUpperCase()
+  if (!sym) return
+  brokerLoading.value = true
+  brokerError.value = ''
+  brokerData.value = null
+  try {
+    brokerData.value = await $fetch<BrokerFetchResp>(`/api/debug/broker-fetch?symbol=${sym}`)
+    if (brokerData.value.error) brokerError.value = brokerData.value.error
+  } catch (e: unknown) {
+    brokerError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    brokerLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -242,6 +286,11 @@ function fmtNum(n: number | undefined): string {
         :class="{ 'tab-btn--active': activeTab === 'raw' }"
         @click="activeTab = 'raw'"
       >原始資料解析</button>
+      <button
+        class="tab-btn"
+        :class="{ 'tab-btn--active': activeTab === 'broker' }"
+        @click="activeTab = 'broker'"
+      >券商 API 測試</button>
     </div>
 
     <div class="body">
@@ -499,6 +548,125 @@ function fmtNum(n: number | undefined): string {
 
       </template>
 
+      <!-- ════════════════════════════════════════ -->
+      <!-- Tab 3: 券商 API 測試                      -->
+      <!-- ════════════════════════════════════════ -->
+      <template v-else-if="activeTab === 'broker'">
+
+        <!-- 流程示意 -->
+        <div class="flow-diagram">
+          <div class="flow-step fs-sys">API /debug/broker-fetch</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step fs-broker">券商#1 富邦…</div>
+          <div class="flow-arrow">→ failover</div>
+          <div class="flow-step fs-broker">券商#N</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step fs-filter">空白/逗號解析</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step fs-done">結果</div>
+        </div>
+
+        <!-- 控制列 -->
+        <div class="ctrl-row">
+          <div class="input-wrap">
+            <label class="input-label">股票代號</label>
+            <input v-model="brokerSymbol" class="sym-input" placeholder="2330" @keydown.enter="fetchBroker" />
+          </div>
+          <button class="run-btn" :disabled="brokerLoading" @click="fetchBroker">
+            <span v-if="!brokerLoading">🔍 測試券商</span>
+            <span v-else class="spin">⟳</span>
+          </button>
+        </div>
+
+        <p class="hint">
+          呼叫 <code>/api/debug/broker-fetch</code>，依序嘗試下方所有券商 base URL，
+          第一個成功即採用（一次請求取得整支股票完整歷史，無需逐月迴圈）。
+        </p>
+
+        <!-- 券商 URL 列表 -->
+        <div v-if="brokerData || !brokerLoading" class="broker-url-list">
+          <div class="section-title">券商 Base URL 優先順序</div>
+          <div class="broker-urls">
+            <div
+              v-for="(url, i) in (brokerData?.broker_urls ?? ['http://fubon-ebrokerdj.fbs.com.tw/','http://jdata.yuanta.com.tw/','http://newjust.masterlink.com.tw/','https://sjmain.esunsec.com.tw/','http://kgieworld.moneydj.com/','http://justdata.moneydj.com/'])"
+              :key="i"
+              class="broker-url-row"
+              :class="{ 'broker-url--success': brokerData && url === brokerData.source, 'broker-url--tried': brokerData && brokerData.tried?.some(t => t.startsWith(url)) }"
+            >
+              <span class="broker-rank">#{{ i + 1 }}</span>
+              <code class="broker-url-text">{{ url }}</code>
+              <span v-if="brokerData && url === brokerData.source" class="broker-tag broker-tag--ok">✓ 成功</span>
+              <span v-else-if="brokerData && brokerData.tried?.some(t => t.startsWith(url))" class="broker-tag broker-tag--fail">✗ 失敗</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 錯誤 -->
+        <div v-if="brokerError" class="error-banner">
+          ✖ {{ brokerError }}
+          <div v-if="brokerData?.tried?.length" style="margin-top:8px; font-size:11px; opacity:.7">
+            <div v-for="t in brokerData.tried" :key="t" style="margin-top:3px">{{ t }}</div>
+          </div>
+        </div>
+
+        <!-- 結果卡 -->
+        <template v-if="brokerData && !brokerError">
+          <div class="stat-bar" style="margin-top:20px">
+            <div class="stat-card">
+              <span class="stat-k">成功券商</span>
+              <span class="stat-v stat-v--green" style="font-size:12px; word-break:break-all">{{ brokerData.source }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-k">資料筆數</span>
+              <span class="stat-v stat-v--hi">{{ brokerData.record_count.toLocaleString() }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-k">最早日期</span>
+              <span class="stat-v stat-v--mono">{{ brokerData.last_record?.date?.split('T')[0] ?? '—' }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-k">最新日期</span>
+              <span class="stat-v stat-v--mono">{{ brokerData.first_record?.date?.split('T')[0] ?? '—' }}</span>
+            </div>
+          </div>
+
+          <!-- 請求 URL -->
+          <div class="url-box" style="margin-top:14px">
+            <span class="url-label">REQUEST URL</span>
+            <code class="url-code">{{ brokerData.url }}</code>
+          </div>
+
+          <!-- 首尾各一筆預覽 -->
+          <div class="section-title" style="margin-top:20px">資料預覽（最舊 / 最新各一筆）</div>
+          <div class="broker-preview">
+            <div v-if="brokerData.last_record" class="preview-card">
+              <div class="preview-label">最舊一筆</div>
+              <table class="preview-tbl">
+                <tr><th>日期</th><td>{{ brokerData.last_record.date?.split('T')[0] }}</td></tr>
+                <tr><th>開 / 高 / 低 / 收</th><td>{{ brokerData.last_record.open }} / {{ brokerData.last_record.high }} / {{ brokerData.last_record.low }} / {{ brokerData.last_record.close }}</td></tr>
+                <tr><th>成交量</th><td>{{ brokerData.last_record.volume?.toLocaleString() }}</td></tr>
+              </table>
+            </div>
+            <div v-if="brokerData.first_record" class="preview-card">
+              <div class="preview-label">最新一筆</div>
+              <table class="preview-tbl">
+                <tr><th>日期</th><td>{{ brokerData.first_record.date?.split('T')[0] }}</td></tr>
+                <tr><th>開 / 高 / 低 / 收</th><td>{{ brokerData.first_record.open }} / {{ brokerData.first_record.high }} / {{ brokerData.first_record.low }} / {{ brokerData.first_record.close }}</td></tr>
+                <tr><th>成交量</th><td>{{ brokerData.first_record.volume?.toLocaleString() }}</td></tr>
+              </table>
+            </div>
+          </div>
+        </template>
+
+        <div v-else-if="!brokerLoading && !brokerData" class="log-empty" style="padding:60px 0; text-align:center; color:rgba(220,215,200,0.22)">
+          輸入股票代號後按「測試券商」，即可看到哪家券商回應成功與資料筆數
+        </div>
+        <div v-else-if="brokerLoading" class="log-empty" style="padding:60px 0; text-align:center; color:rgba(220,215,200,0.4)">
+          <span class="spin" style="font-size:20px">⟳</span> 嘗試各家券商中…
+        </div>
+
+      </template>
+
     </div>
   </div>
 </template>
@@ -699,4 +867,56 @@ function fmtNum(n: number | undefined): string {
 .log-meta--acc { color: rgba(78,207,168,0.55); }
 
 .log-elapsed { font-size: 11px; color: rgba(220,215,200,0.2); white-space: nowrap; flex-shrink: 0; }
+
+/* ── 券商 URL 列表 ── */
+.broker-url-list { margin-top: 24px; }
+.broker-urls { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.broker-url-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 8px;
+  transition: background .1s;
+}
+.broker-url--success {
+  background: rgba(78,207,168,0.06);
+  border-color: rgba(78,207,168,0.25);
+}
+.broker-url--tried {
+  background: rgba(224,82,82,0.05);
+  border-color: rgba(224,82,82,0.18);
+  opacity: .7;
+}
+.broker-rank { font-family: 'Fira Code', monospace; font-size: 11px; color: rgba(220,215,200,0.3); min-width: 24px; }
+.broker-url-text { font-family: 'Fira Code', monospace; font-size: 12.5px; color: rgba(220,215,200,0.65); flex: 1; word-break: break-all; }
+.broker-tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; flex-shrink: 0; }
+.broker-tag--ok   { background: rgba(78,207,168,0.15); color: #4ecfa8; }
+.broker-tag--fail { background: rgba(224,82,82,0.12); color: #e05252; }
+
+/* ── 流程步驟顏色 ── */
+.fs-broker { background: rgba(240,168,66,0.12); color: #f0a842; border-color: rgba(240,168,66,0.3); }
+
+/* ── 資料預覽 ── */
+.broker-preview { display: flex; gap: 16px; margin-top: 10px; flex-wrap: wrap; }
+.preview-card {
+  flex: 1; min-width: 260px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.preview-label {
+  font-size: 11px; font-weight: 600;
+  color: rgba(220,215,200,0.4);
+  text-transform: uppercase; letter-spacing: .06em;
+  padding: 8px 14px;
+  background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.preview-tbl { width: 100%; border-collapse: collapse; }
+.preview-tbl th, .preview-tbl td { padding: 6px 14px; font-size: 12.5px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.preview-tbl th { color: rgba(220,215,200,0.4); font-weight: 400; width: 140px; }
+.preview-tbl td { font-family: 'Fira Code', monospace; color: rgba(220,215,200,0.8); }
+.preview-tbl tr:last-child th, .preview-tbl tr:last-child td { border-bottom: none; }
 </style>

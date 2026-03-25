@@ -47,3 +47,50 @@ func (h *DebugHandler) RawMonth(c *gin.Context) {
 
 	c.JSON(http.StatusOK, result)
 }
+
+// BrokerFetch GET /api/debug/broker-fetch?symbol=2330
+// 依序嘗試所有券商 base URL，回傳第一個成功的原始解析結果（含診斷資訊）
+func (h *DebugHandler) BrokerFetch(c *gin.Context) {
+	symbol := c.Query("symbol")
+	if symbol == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 symbol 參數"})
+		return
+	}
+
+	type response struct {
+		Symbol      string   `json:"symbol"`
+		Source      string   `json:"source"`
+		URL         string   `json:"url"`
+		RecordCount int      `json:"record_count"`
+		FirstRecord any      `json:"first_record,omitempty"`
+		LastRecord  any      `json:"last_record,omitempty"`
+		Tried       []string `json:"tried,omitempty"`
+		BrokerURLs  []string `json:"broker_urls"`
+		Error       string   `json:"error,omitempty"`
+	}
+
+	result, err := scraper.FetchBrokerStockHistory(symbol)
+
+	resp := response{
+		Symbol:     symbol,
+		BrokerURLs: scraper.DefaultBrokerBaseURLs,
+		Tried:      result.Tried,
+	}
+
+	if err != nil {
+		resp.Error = err.Error()
+		c.JSON(http.StatusOK, resp) // 回 200 方便前端顯示診斷
+		return
+	}
+
+	resp.Source = result.Source
+	resp.URL = result.URL
+	resp.RecordCount = len(result.Records)
+	if len(result.Records) > 0 {
+		resp.FirstRecord = result.Records[0]
+		resp.LastRecord = result.Records[len(result.Records)-1]
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+

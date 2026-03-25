@@ -87,6 +87,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 		debugGroup := api.Group("/debug")
 		{
 			debugGroup.GET("/raw-month", debugHandler.RawMonth)
+			debugGroup.GET("/broker-fetch", debugHandler.BrokerFetch)
 		}
 	}
 

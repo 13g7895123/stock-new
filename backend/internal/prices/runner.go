@@ -199,9 +199,26 @@ func (r *Runner) worker(jobs <-chan stockInfo, results chan<- fetchResult) {
 	}
 }
 
-// fetchAllHistory 從當月往回抓，連續 3 個月無資料即停止
-// 最多回溯 360 個月（30 年），每月請求間隔 120ms 避免觸發 TWSE/TPEX rate limit
+// fetchAllHistory 先嘗試券商 API（一次取全部歷史），失敗才回退到 TWSE/TPEX 月份迴圈
 func (r *Runner) fetchAllHistory(s stockInfo) (int, error) {
+	// ── 方案一：券商 API（一次請求取全部） ──────────────────────
+	brokerResult, brokerErr := scraper.FetchBrokerStockHistory(s.Symbol)
+	if brokerErr == nil && len(brokerResult.Records) > 30 {
+		log.Printf("[price-sync][%s] broker OK source=%s records=%d", s.Symbol, brokerResult.Source, len(brokerResult.Records))
+		return r.saveRecords(brokerResult.Records)
+	}
+	if brokerErr != nil {
+		log.Printf("[price-sync][%s] broker failed, fallback to TWSE/TPEX: %v", s.Symbol, brokerErr)
+	} else {
+		log.Printf("[price-sync][%s] broker returned only %d records, fallback to TWSE/TPEX", s.Symbol, len(brokerResult.Records))
+	}
+
+	// ── 方案二：TWSE/TPEX 逐月迴圈 ─────────────────────────────
+	return r.fetchAllHistoryByMonth(s)
+}
+
+// fetchAllHistoryByMonth 從當月往回逐月抓，連續 3 個月無資料即停止
+func (r *Runner) fetchAllHistoryByMonth(s stockInfo) (int, error) {
 	now := time.Now().In(time.FixedZone("CST", 8*3600))
 	var all []models.DailyPrice
 	emptyStreak := 0
@@ -227,19 +244,23 @@ func (r *Runner) fetchAllHistory(s stockInfo) (int, error) {
 			if emptyStreak >= maxEmptyStreak {
 				break
 			}
-			time.Sleep(300 * time.Millisecond) // 錯誤後等稍長
+			time.Sleep(300 * time.Millisecond)
 			continue
 		}
 
 		emptyStreak = 0
 		all = append(all, records...)
-		time.Sleep(120 * time.Millisecond) // 每月請求間隔，避免 rate limit
+		time.Sleep(120 * time.Millisecond)
 	}
 
+	return r.saveRecords(all)
+}
+
+// saveRecords UPSERT 一組 DailyPrice 至資料庫
+func (r *Runner) saveRecords(all []models.DailyPrice) (int, error) {
 	if len(all) == 0 {
 		return 0, nil
 	}
-
 	result := r.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "symbol"}, {Name: "date"}},
 		DoUpdates: clause.AssignmentColumns([]string{"open", "high", "low", "close", "volume", "tx_value", "tx_count"}),
@@ -252,8 +273,14 @@ func (r *Runner) fetchAllHistory(s stockInfo) (int, error) {
 }
 
 // FetchSingle 同步爬取單支股票的全部歷史日K，用於測試或手動補抓
+// useBroker=true 只用券商 API；false 只用 TWSE/TPEX 月份迴圈；nil/未傳使用自動（先券商再 fallback）
 func (r *Runner) FetchSingle(symbol, market string) (int, error) {
 	return r.fetchAllHistory(stockInfo{Symbol: symbol, Market: market})
+}
+
+// FetchSingleBrokerOnly 只透過券商 API 抓取（不走 TWSE/TPEX 月份迴圈）
+func (r *Runner) FetchSingleBrokerOnly(symbol string) (*scraper.BrokerFetchResult, error) {
+	return scraper.FetchBrokerStockHistory(symbol)
 }
 
 func intEnv(key string, defaultVal int) int {
