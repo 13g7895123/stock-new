@@ -11,7 +11,12 @@ useHead({
   ],
 })
 
-// ── 型別 ─────────────────────────────────
+// ── Tab ───────────────────────────────────────
+type ViewTab = 'stream' | 'raw'
+const activeTab = ref<ViewTab>('stream')
+
+// ── 型別 (SSE stream) ─────────────────────────
+
 interface SSEEvent {
   stage: string
   message?: string
@@ -132,6 +137,82 @@ const stageLabel: Record<string, string> = {
   done:    'DONE',
   error:   'ERROR',
 }
+
+// ── 型別 (原始資料解析) ───────────────────────
+interface FilterRule {
+  name: string
+  rule: string
+  applied: string
+}
+
+interface DebugRow {
+  row_num: number
+  raw: string[]
+  date?: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  tx_value: number
+  tx_count: number
+  skipped: boolean
+  skip_reason?: string
+}
+
+interface DebugRawMonth {
+  symbol: string
+  market: string
+  year_month: string
+  url: string
+  fields: string[]
+  raw_count: number
+  pass_count: number
+  skip_count: number
+  skip_reasons: string[]
+  rows: DebugRow[]
+  filter_rules: FilterRule[]
+}
+
+// ── 狀態 (原始資料解析) ───────────────────────
+const rawSymbol  = ref('2330')
+const rawYyyymm  = ref(() => {
+  const d = new Date()
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`
+}())
+const rawLoading = ref(false)
+const rawError   = ref('')
+const rawData    = ref<DebugRawMonth | null>(null)
+const rowFilter  = ref<'all' | 'pass' | 'skip'>('all')
+const rawView    = ref<'raw' | 'parsed' | 'both'>('both')
+
+const filteredRows = computed(() => {
+  if (!rawData.value) return []
+  const rows = rawData.value.rows
+  if (rowFilter.value === 'pass') return rows.filter(r => !r.skipped)
+  if (rowFilter.value === 'skip') return rows.filter(r => r.skipped)
+  return rows
+})
+
+async function fetchRaw() {
+  const sym = rawSymbol.value.trim().toUpperCase()
+  if (!sym) return
+  rawLoading.value = true
+  rawError.value = ''
+  rawData.value = null
+  try {
+    rawData.value = await $fetch<DebugRawMonth>(`/api/debug/raw-month?symbol=${sym}&yyyymm=${rawYyyymm.value}`)
+  } catch (e: unknown) {
+    rawError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    rawLoading.value = false
+  }
+}
+
+function fmtNum(n: number | undefined): string {
+  if (n === undefined || n === null) return '—'
+  return n.toLocaleString()
+}
 </script>
 
 <template>
@@ -142,93 +223,281 @@ const stageLabel: Record<string, string> = {
         <div class="hd-left">
           <NuxtLink to="/" class="back">← 首頁</NuxtLink>
           <span class="sep">/</span>
+          <NuxtLink to="/debug" class="back">Debug</NuxtLink>
+          <span class="sep">/</span>
           <span class="cur">爬蟲測試</span>
         </div>
       </div>
     </header>
 
+    <!-- ── Tab 導覽列 ── -->
+    <div class="tab-nav">
+      <button
+        class="tab-btn"
+        :class="{ 'tab-btn--active': activeTab === 'stream' }"
+        @click="activeTab = 'stream'"
+      >SSE 全量串流</button>
+      <button
+        class="tab-btn"
+        :class="{ 'tab-btn--active': activeTab === 'raw' }"
+        @click="activeTab = 'raw'"
+      >原始資料解析</button>
+    </div>
+
     <div class="body">
 
-      <!-- ── 控制列 ── -->
-      <div class="ctrl-row">
-        <div class="input-wrap">
-          <label class="input-label">股票代號</label>
-          <input
-            v-model="symbol"
-            class="sym-input"
-            placeholder="例：2330"
-            :disabled="running"
-            @keydown.enter="startFetch"
-          />
-        </div>
-        <button class="run-btn" :class="{ 'run-btn--stop': running }" @click="startFetch">
-          <span v-if="!running">▶ 開始測試</span>
-          <span v-else class="spin">⟳</span>
-          <span v-if="running"> 中止</span>
-        </button>
-      </div>
+      <!-- ════════════════════════════════════════ -->
+      <!-- Tab 1: SSE 全量串流                       -->
+      <!-- ════════════════════════════════════════ -->
+      <template v-if="activeTab === 'stream'">
 
-      <!-- ── 說明 ── -->
-      <p class="hint">
-        呼叫 <code>/api/scraper/prices/stock/:symbol</code>，從當月往回逐月抓取，
-        連續 3 個月無資料停止。以下即時顯示每一步 SSE 事件。
-      </p>
+        <!-- 流程示意 -->
+        <div class="flow-diagram">
+          <div class="flow-step fs-sys">API /stock/:symbol</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step fs-loop">月份迴圈</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step fs-twse">TWSE / TPEX</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step fs-filter">過濾 &amp; 解析</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step fs-db">DB UPSERT</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-step fs-done">done</div>
+        </div>
 
-      <!-- ── 進度條 ── -->
-      <div v-if="running || progress > 0" class="prog-wrap">
-        <div class="prog-bar" :style="{ width: progress + '%' }" :class="{ 'prog-bar--done': !running && progress === 100 }" />
-        <span class="prog-label">{{ progress }}%</span>
-      </div>
+        <!-- 控制列 -->
+        <div class="ctrl-row">
+          <div class="input-wrap">
+            <label class="input-label">股票代號</label>
+            <input
+              v-model="symbol"
+              class="sym-input"
+              placeholder="例：2330"
+              :disabled="running"
+              @keydown.enter="startFetch"
+            />
+          </div>
+          <button class="run-btn" :class="{ 'run-btn--stop': running }" @click="startFetch">
+            <span v-if="!running">▶ 開始測試</span>
+            <span v-if="running" class="spin">⟳</span>
+            <span v-if="running"> 中止</span>
+          </button>
+        </div>
 
-      <!-- ── 錯誤提示 ── -->
-      <div v-if="errorMsg" class="error-banner">
-        ✖ {{ errorMsg }}
-      </div>
+        <p class="hint">
+          呼叫 <code>/api/scraper/prices/stock/:symbol</code>，從當月往回逐月抓取，
+          連續 3 個月無資料停止。以下即時顯示每一步 SSE 事件。
+        </p>
 
-      <!-- ── 摘要 ── -->
-      <div v-if="summary" class="summary">
-        <div class="sum-item">
-          <span class="sum-k">取得資料</span>
-          <span class="sum-v sum-v--hi">{{ summary.records.toLocaleString() }} 筆</span>
+        <!-- 進度條 -->
+        <div v-if="running || progress > 0" class="prog-wrap">
+          <div class="prog-bar" :style="{ width: progress + '%' }" :class="{ 'prog-bar--done': !running && progress === 100 }" />
+          <span class="prog-label">{{ progress }}%</span>
         </div>
-        <div class="sum-item">
-          <span class="sum-k">月份數</span>
-          <span class="sum-v">{{ summary.months }} 個月</span>
-        </div>
-        <div class="sum-item">
-          <span class="sum-k">耗時</span>
-          <span class="sum-v">{{ (summary.elapsed / 1000).toFixed(1) }} 秒</span>
-        </div>
-        <div class="sum-item">
-          <span class="sum-k">平均每月</span>
-          <span class="sum-v">{{ summary.months ? (summary.elapsed / summary.months / 1000).toFixed(2) : '—' }} 秒</span>
-        </div>
-      </div>
 
-      <!-- ── 日誌 ── -->
-      <div class="log-panel">
-        <div class="log-header">
-          <span class="log-title">事件日誌</span>
-          <span class="log-count">{{ logs.length }} 筆</span>
-          <button v-if="logs.length" class="clear-btn" @click="reset">清除</button>
-        </div>
-        <div ref="logBox" class="log-box">
-          <div v-if="!logs.length" class="log-empty">尚未開始，請輸入股票代號後按「開始測試」</div>
-          <div
-            v-for="(entry, i) in logs"
-            :key="i"
-            class="log-row"
-            :class="`log-row--${entry.stage}`"
-          >
-            <span class="log-ts">{{ entry.ts }}</span>
-            <span class="log-badge" :class="`badge--${entry.stage}`">{{ stageLabel[entry.stage] ?? entry.stage.toUpperCase() }}</span>
-            <span class="log-msg">{{ entry.message }}</span>
-            <span v-if="entry.total" class="log-meta">+{{ entry.total }} 筆</span>
-            <span v-if="entry.synced" class="log-meta log-meta--acc">累計 {{ entry.synced?.toLocaleString() }}</span>
-            <span class="log-elapsed">+{{ entry.elapsed }}ms</span>
+        <!-- 錯誤 -->
+        <div v-if="errorMsg" class="error-banner">✖ {{ errorMsg }}</div>
+
+        <!-- 摘要 -->
+        <div v-if="summary" class="summary">
+          <div class="sum-item">
+            <span class="sum-k">取得資料</span>
+            <span class="sum-v sum-v--hi">{{ summary.records.toLocaleString() }} 筆</span>
+          </div>
+          <div class="sum-item">
+            <span class="sum-k">月份數</span>
+            <span class="sum-v">{{ summary.months }} 個月</span>
+          </div>
+          <div class="sum-item">
+            <span class="sum-k">耗時</span>
+            <span class="sum-v">{{ (summary.elapsed / 1000).toFixed(1) }} 秒</span>
+          </div>
+          <div class="sum-item">
+            <span class="sum-k">平均每月</span>
+            <span class="sum-v">{{ summary.months ? (summary.elapsed / summary.months / 1000).toFixed(2) : '—' }} 秒</span>
           </div>
         </div>
-      </div>
+
+        <!-- 日誌 -->
+        <div class="log-panel">
+          <div class="log-header">
+            <span class="log-title">事件日誌</span>
+            <span class="log-count">{{ logs.length }} 筆</span>
+            <button v-if="logs.length" class="clear-btn" @click="reset">清除</button>
+          </div>
+          <div ref="logBox" class="log-box">
+            <div v-if="!logs.length" class="log-empty">尚未開始，請輸入股票代號後按「開始測試」</div>
+            <div
+              v-for="(entry, i) in logs"
+              :key="i"
+              class="log-row"
+              :class="`log-row--${entry.stage}`"
+            >
+              <span class="log-ts">{{ entry.ts }}</span>
+              <span class="log-badge" :class="`badge--${entry.stage}`">{{ stageLabel[entry.stage] ?? entry.stage.toUpperCase() }}</span>
+              <span class="log-msg">{{ entry.message }}</span>
+              <span v-if="entry.total" class="log-meta">+{{ entry.total }} 筆</span>
+              <span v-if="entry.synced" class="log-meta log-meta--acc">累計 {{ entry.synced?.toLocaleString() }}</span>
+              <span class="log-elapsed">+{{ entry.elapsed }}ms</span>
+            </div>
+          </div>
+        </div>
+
+      </template>
+
+      <!-- ════════════════════════════════════════ -->
+      <!-- Tab 2: 原始資料解析                        -->
+      <!-- ════════════════════════════════════════ -->
+      <template v-else>
+
+        <!-- 控制列 -->
+        <div class="ctrl-row">
+          <div class="input-wrap">
+            <label class="input-label">股票代號</label>
+            <input v-model="rawSymbol" class="sym-input" placeholder="2330" @keydown.enter="fetchRaw" />
+          </div>
+          <div class="input-wrap">
+            <label class="input-label">年月 YYYYMM</label>
+            <input v-model="rawYyyymm" class="sym-input" style="width:110px" placeholder="202503" @keydown.enter="fetchRaw" />
+          </div>
+          <button class="run-btn" :disabled="rawLoading" @click="fetchRaw">
+            <span v-if="!rawLoading">🔍 查詢</span>
+            <span v-else class="spin">⟳</span>
+          </button>
+        </div>
+
+        <p class="hint">
+          呼叫 <code>/api/debug/raw-month?symbol=&amp;yyyymm=</code>，
+          向 TWSE / TPEX 拉取單月資料，逐列套用過濾規則並回傳解析結果。
+        </p>
+
+        <!-- 錯誤 -->
+        <div v-if="rawError" class="error-banner">✖ {{ rawError }}</div>
+
+        <!-- ── 結果區 ── -->
+        <template v-if="rawData">
+
+          <!-- 統計卡 -->
+          <div class="stat-bar">
+            <div class="stat-card">
+              <span class="stat-k">市場</span>
+              <span class="stat-v" :class="rawData.market === 'TWSE' ? 'stat-v--blue' : 'stat-v--purple'">{{ rawData.market }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-k">年月</span>
+              <span class="stat-v stat-v--mono">{{ rawData.year_month }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-k">原始列數</span>
+              <span class="stat-v stat-v--mono">{{ rawData.raw_count }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-k">通過</span>
+              <span class="stat-v stat-v--green">{{ rawData.pass_count }}</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-k">跳過</span>
+              <span class="stat-v stat-v--red">{{ rawData.skip_count }}</span>
+            </div>
+          </div>
+
+          <!-- 請求 URL -->
+          <div class="url-box">
+            <span class="url-label">REQUEST URL</span>
+            <code class="url-code">{{ rawData.url }}</code>
+          </div>
+
+          <!-- API 欄位索引 -->
+          <div class="section-title">API 回應欄位</div>
+          <div class="fields-row">
+            <span v-for="(f, idx) in rawData.fields" :key="idx" class="field-tag">
+              <span class="field-idx">[{{ idx }}]</span> {{ f }}
+            </span>
+          </div>
+
+          <!-- 過濾規則 -->
+          <div class="section-title">過濾規則</div>
+          <div class="rules-grid">
+            <div v-for="(rule, idx) in rawData.filter_rules" :key="idx" class="rule-card">
+              <div class="rule-name">
+                <span class="rule-num">{{ idx + 1 }}</span>
+                {{ rule.name }}
+              </div>
+              <code class="rule-expr">{{ rule.rule }}</code>
+              <div class="rule-desc">{{ rule.applied }}</div>
+            </div>
+          </div>
+
+          <!-- 跳過原因 -->
+          <div v-if="rawData.skip_reasons && rawData.skip_reasons.length" class="skip-badges">
+            <span class="section-title" style="margin: 0; font-size: 11px;">跳過原因</span>
+            <span v-for="r in rawData.skip_reasons" :key="r" class="skip-badge">{{ r }}</span>
+          </div>
+
+          <!-- 資料表格 -->
+          <div class="section-title" style="margin-top:20px">
+            逐列資料
+            <span class="tbl-filter-btns">
+              <button v-for="f in ['all','pass','skip'] as const" :key="f" class="filter-btn" :class="{ 'filter-btn--active': rowFilter === f }" @click="rowFilter = f">{{ { all: '全部', pass: '通過', skip: '跳過' }[f] }}</button>
+            </span>
+            <span class="tbl-view-btns">
+              <button v-for="v in ['raw','parsed','both'] as const" :key="v" class="filter-btn filter-btn--sm" :class="{ 'filter-btn--active': rawView === v }" @click="rawView = v">{{ { raw: 'Raw', parsed: '解析', both: '全欄' }[v] }}</button>
+            </span>
+          </div>
+
+          <div class="tbl-wrap">
+            <table class="data-tbl">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th v-if="rawView === 'raw' || rawView === 'both'" v-for="(f, fi) in rawData.fields" :key="'f'+fi" class="th-raw">[{{ fi }}] {{ f }}</th>
+                  <th v-if="rawView === 'parsed' || rawView === 'both'">日期</th>
+                  <th v-if="rawView === 'parsed' || rawView === 'both'">開盤</th>
+                  <th v-if="rawView === 'parsed' || rawView === 'both'">最高</th>
+                  <th v-if="rawView === 'parsed' || rawView === 'both'">最低</th>
+                  <th v-if="rawView === 'parsed' || rawView === 'both'">收盤</th>
+                  <th v-if="rawView === 'parsed' || rawView === 'both'">成交量</th>
+                  <th>狀態</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="row in filteredRows"
+                  :key="row.row_num"
+                  :class="{ 'tr-skip': row.skipped }"
+                >
+                  <td class="td-num">{{ row.row_num }}</td>
+                  <td v-if="rawView === 'raw' || rawView === 'both'" v-for="(cell, ci) in row.raw" :key="'c'+ci" class="td-raw" :class="{ 'td-date': ci === 0 }">{{ cell }}</td>
+                  <td v-if="rawView === 'parsed' || rawView === 'both'" class="td-date">{{ row.date || '—' }}</td>
+                  <td v-if="rawView === 'parsed' || rawView === 'both'" class="td-price">{{ fmtNum(row.open) }}</td>
+                  <td v-if="rawView === 'parsed' || rawView === 'both'" class="td-price td-high">{{ fmtNum(row.high) }}</td>
+                  <td v-if="rawView === 'parsed' || rawView === 'both'" class="td-price td-low">{{ fmtNum(row.low) }}</td>
+                  <td v-if="rawView === 'parsed' || rawView === 'both'" class="td-price">{{ fmtNum(row.close) }}</td>
+                  <td v-if="rawView === 'parsed' || rawView === 'both'" class="td-vol">{{ fmtNum(row.volume) }}</td>
+                  <td class="td-status">
+                    <span v-if="!row.skipped" class="badge-pass">PASS</span>
+                    <template v-else>
+                      <span class="badge-skip">SKIP</span>
+                      <span v-if="row.skip_reason" class="skip-reason">{{ row.skip_reason }}</span>
+                    </template>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+        </template>
+
+        <!-- 空狀態 -->
+        <div v-else-if="!rawLoading" class="log-empty" style="padding:60px 0; text-align:center; color:rgba(220,215,200,0.22)">
+          輸入股票代號與年月後按「查詢」，即可看到該月原始 API 資料與過濾細節
+        </div>
+        <div v-else class="log-empty" style="padding:60px 0; text-align:center; color:rgba(220,215,200,0.4)">
+          <span class="spin" style="font-size:20px">⟳</span> 載入中…
+        </div>
+
+      </template>
 
     </div>
   </div>

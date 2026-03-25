@@ -36,6 +36,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 	chipsHandler := handlers.NewChipsHandler(db)
 	tagHandler := handlers.NewTagHandler(db)
 	priceSyncHandler := handlers.NewPriceSyncHandler(db)
+	debugHandler := handlers.NewDebugHandler(db)
 
 	api := r.Group("/api")
 	{
@@ -81,6 +82,11 @@ func Setup(db *gorm.DB) *gin.Engine {
 			chips.GET("/status", chipsHandler.Status)
 			chips.POST("/trigger", chipsHandler.Trigger)
 			chips.POST("/trigger-single", chipsHandler.TriggerSingle)
+		}
+
+		debugGroup := api.Group("/debug")
+		{
+			debugGroup.GET("/raw-month", debugHandler.RawMonth)
 		}
 	}
 
