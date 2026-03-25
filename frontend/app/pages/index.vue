@@ -874,10 +874,12 @@ const settingsOpen = ref(false)
               </NuxtLink>
             </div>
           </div>
-          <button class="test-open-btn" @click="openTestModal('chips')">
-            <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
-            單股測試
-          </button>
+          <div class="test-sep">
+            <button class="test-open-btn" @click="openTestModal('chips')">
+              <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
+              單股測試
+            </button>
+          </div>
           <button
             class="action-btn"
             :class="{ 'action-btn--busy': chipsTriggering || chipsStatus?.status === 'running' }"
@@ -938,10 +940,12 @@ const settingsOpen = ref(false)
               <p class="chips-progress__text">{{ priceSyncStatus?.message || '爬取進行中…' }}</p>
             </div>
           </div>
-          <button class="test-open-btn" @click="openTestModal('price')">
-            <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
-            單股測試
-          </button>
+          <div class="test-sep">
+            <button class="test-open-btn" @click="openTestModal('price')">
+              <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
+              單股測試
+            </button>
+          </div>
           <button
             class="action-btn"
             :class="{ 'action-btn--busy': priceSyncTriggering || priceSyncStatus?.status === 'running' }"
@@ -1137,10 +1141,12 @@ const settingsOpen = ref(false)
             <span class="cr-value">{{ chipsFailureDetail }}</span>
           </div>
 
-          <button class="test-open-btn" @click="openTestModal('chips')">
-            <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
-            單股測試
-          </button>
+          <div class="test-sep">
+            <button class="test-open-btn" @click="openTestModal('chips')">
+              <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
+              單股測試
+            </button>
+          </div>
 
           <div class="chips-actions">
             <button
@@ -1216,10 +1222,12 @@ const settingsOpen = ref(false)
             <p class="cp-text">{{ priceSyncStatus?.message || '爬取進行中…' }}</p>
           </div>
 
-          <button class="test-open-btn" @click="openTestModal('price')">
-            <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
-            單股測試
-          </button>
+          <div class="test-sep">
+            <button class="test-open-btn" @click="openTestModal('price')">
+              <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
+              單股測試
+            </button>
+          </div>
 
           <div class="chips-actions">
             <button
@@ -2601,13 +2609,25 @@ const settingsOpen = ref(false)
   font-size: 11.5px;
   cursor: pointer;
   transition: color 0.18s, border-color 0.18s, background 0.18s, border-style 0.18s;
-  margin-top: 10px;
+  /* 與其他按鈕區隔——上方用算區随分隔線，下方等內部間距 */
+  margin-top: 0;
+  align-self: flex-start;
 }
 .test-open-btn:hover {
   color: var(--blue);
   border-color: var(--blue);
   border-style: solid;
   background: color-mix(in oklch, var(--blue) 8%, transparent);
+}
+
+/* 分隔線：放在 test-open-btn 上方，透過 wrapper div.test-sep 實現 */
+.test-sep {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
 
 /* ═══════════════════════════════════════
@@ -2617,7 +2637,7 @@ const settingsOpen = ref(false)
   position: fixed;
   inset: 0;
   z-index: 200;
-  background: color-mix(in oklch, oklch(5% 0.010 256) 72%, transparent);
+  background: color-mix(in oklch, var(--bg) 72%, transparent);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   display: flex;
@@ -2632,30 +2652,16 @@ const settingsOpen = ref(false)
 }
 
 .tm-panel {
-  /* self-contained dark tokens — works regardless of page theme */
-  --tp-bg:   oklch(10%  0.018 256);
-  --tp-s1:   oklch(14%  0.020 257);
-  --tp-s2:   oklch(18%  0.022 258);
-  --tp-line: oklch(24%  0.022 258);
-  --tp-ln2:  oklch(34%  0.022 258);
-  --tp-t1:   oklch(96%  0.006 218);
-  --tp-t2:   oklch(72%  0.013 240);
-  --tp-t3:   oklch(48%  0.012 240);
-  --tp-blue: oklch(63%  0.20  264);
-  --tp-gold: oklch(76%  0.13  82);
-  --tp-dn:   oklch(64%  0.18  148);
-  --tp-up:   oklch(62%  0.18  22);
-
   width: 100%;
   max-width: 600px;
   max-height: 88vh;
   display: flex;
   flex-direction: column;
-  background: var(--tp-s1);
-  border: 1px solid var(--tp-ln2);
+  background: var(--s1);
+  border: 1px solid var(--line2);
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 32px 96px color-mix(in oklch, oklch(0% 0 0) 55%, transparent);
+  box-shadow: 0 32px 96px color-mix(in oklch, oklch(0% 0 0) 40%, transparent);
   animation: panel-in 0.18s cubic-bezier(0.34, 1.28, 0.64, 1);
 }
 @keyframes panel-in {
@@ -2668,54 +2674,54 @@ const settingsOpen = ref(false)
   align-items: center;
   gap: 10px;
   padding: 14px 18px;
-  border-bottom: 1px solid var(--tp-line);
+  border-bottom: 1px solid var(--line);
   flex-shrink: 0;
-  background: var(--tp-bg);
+  background: var(--bg);
 }
 .tm-badge {
   padding: 2px 8px;
-  background: color-mix(in oklch, var(--tp-gold) 12%, transparent);
-  border: 1px solid color-mix(in oklch, var(--tp-gold) 45%, transparent);
+  background: color-mix(in oklch, var(--gold) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--gold) 45%, transparent);
   border-radius: 4px;
   font-size: 10px;
   font-family: var(--mono);
   font-weight: 700;
   letter-spacing: 0.1em;
-  color: var(--tp-gold);
+  color: var(--gold);
   flex-shrink: 0;
 }
 .tm-title {
   flex: 1;
   font-size: 13.5px;
   font-weight: 600;
-  color: var(--tp-t1);
+  color: var(--t1);
   letter-spacing: -0.01em;
 }
 .tm-close {
   width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
   background: transparent;
-  border: 1px solid var(--tp-line);
+  border: 1px solid var(--line);
   border-radius: 7px;
-  color: var(--tp-t3);
+  color: var(--t3);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.tm-close:hover { background: var(--tp-s2); border-color: var(--tp-ln2); color: var(--tp-t1); }
+.tm-close:hover { background: var(--s2); border-color: var(--line2); color: var(--t1); }
 
 .tm-input-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--tp-line);
+  border-bottom: 1px solid var(--line);
   flex-shrink: 0;
-  background: var(--tp-s2);
+  background: var(--s2);
 }
 .tm-prompt {
   font-family: var(--mono);
   font-size: 16px;
-  color: var(--tp-blue);
+  color: var(--blue);
   flex-shrink: 0;
   user-select: none;
 }
@@ -2723,23 +2729,23 @@ const settingsOpen = ref(false)
   flex: 1;
   height: 34px;
   padding: 0 12px;
-  background: var(--tp-bg);
-  border: 1px solid var(--tp-line);
+  background: var(--bg);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  color: var(--tp-t1);
+  color: var(--t1);
   font-size: 15px;
   font-family: var(--mono);
   letter-spacing: 0.05em;
   outline: none;
   transition: border-color 0.2s;
 }
-.tm-input:focus { border-color: var(--tp-blue); }
-.tm-input::placeholder { color: var(--tp-t3); font-family: var(--font); font-size: 13px; letter-spacing: 0; }
+.tm-input:focus { border-color: var(--blue); }
+.tm-input::placeholder { color: var(--t3); font-family: var(--font); font-size: 13px; letter-spacing: 0; }
 .tm-input:disabled { opacity: 0.45; }
 .tm-run-btn {
   height: 34px;
   padding: 0 18px;
-  background: var(--tp-blue);
+  background: var(--blue);
   border: none;
   border-radius: 8px;
   color: oklch(97% 0.005 220);
@@ -2761,15 +2767,15 @@ const settingsOpen = ref(false)
   min-height: 160px;
   max-height: 360px;
   padding: 14px 20px;
-  background: var(--tp-bg);
+  background: var(--s3);
   font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.75;
   scrollbar-width: thin;
-  scrollbar-color: var(--tp-ln2) transparent;
+  scrollbar-color: var(--line2) transparent;
 }
 .tm-empty {
-  color: var(--tp-t3);
+  color: var(--t3);
   font-family: var(--font);
   font-size: 13px;
   text-align: center;
@@ -2781,14 +2787,14 @@ const settingsOpen = ref(false)
   align-items: flex-start;
   gap: 10px;
   padding: 1px 0;
-  color: var(--tp-t3);
+  color: var(--t3);
 }
-.tm-line--running { color: var(--tp-gold); }
-.tm-line--done    { color: var(--tp-dn); }
-.tm-line--error   { color: var(--tp-up); }
-.tm-line--info    { color: var(--tp-t2); }
+.tm-line--running { color: var(--gold); }
+.tm-line--done    { color: var(--dn); }
+.tm-line--error   { color: var(--up); }
+.tm-line--info    { color: var(--t2); }
 .tm-icon { flex-shrink: 0; width: 14px; text-align: center; margin-top: 1px; }
-.tm-dot  { color: var(--tp-t3); opacity: 0.45; }
+.tm-dot  { color: var(--t3); opacity: 0.45; }
 .tm-text { flex: 1; word-break: break-all; }
 .tm-spin { display: inline-block; animation: spin 1.1s linear infinite; }
 
@@ -2798,29 +2804,29 @@ const settingsOpen = ref(false)
   justify-content: space-between;
   gap: 10px;
   padding: 10px 16px;
-  border-top: 1px solid var(--tp-line);
+  border-top: 1px solid var(--line);
   flex-shrink: 0;
-  background: var(--tp-s2);
+  background: var(--s2);
 }
 .tm-btn-cancel {
   height: 32px;
   padding: 0 16px;
   background: transparent;
-  border: 1px solid var(--tp-ln2);
+  border: 1px solid var(--line2);
   border-radius: 8px;
-  color: var(--tp-t2);
+  color: var(--t2);
   font-size: 12.5px;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.tm-btn-cancel:hover { background: var(--tp-s1); color: var(--tp-t1); }
+.tm-btn-cancel:hover { background: var(--s1); color: var(--t1); }
 .tm-btn-go {
   height: 32px;
   padding: 0 16px;
-  background: color-mix(in oklch, var(--tp-blue) 15%, transparent);
-  border: 1px solid var(--tp-blue);
+  background: color-mix(in oklch, var(--blue) 15%, transparent);
+  border: 1px solid var(--blue);
   border-radius: 8px;
-  color: var(--tp-blue);
+  color: var(--blue);
   font-size: 12.5px;
   font-weight: 500;
   text-decoration: none;
@@ -2828,5 +2834,5 @@ const settingsOpen = ref(false)
   align-items: center;
   transition: background 0.15s, color 0.15s;
 }
-.tm-btn-go:hover { background: var(--tp-blue); color: oklch(97% 0.005 220); }
+.tm-btn-go:hover { background: var(--blue); color: oklch(97% 0.005 220); }
 </style>
