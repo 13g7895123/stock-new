@@ -55,6 +55,74 @@ const canvasWrap = ref<HTMLElement | null>(null)
 const hoveredIdx = ref<number | null>(null)
 let roChart: ResizeObserver | null = null
 
+// ── MA Lines ───────────────────────────────────────────────
+interface MALine { period: number; color: string; enabled: boolean }
+const maLines = ref<MALine[]>([
+  { period: 5,  color: '#f0a842', enabled: true  },
+  { period: 10, color: '#5b9cf6', enabled: true  },
+  { period: 20, color: '#a78ce8', enabled: true  },
+  { period: 60, color: '#4ecfa8', enabled: false },
+])
+
+function calcMA(data: DailyPrice[], period: number): (number | null)[] {
+  const result: (number | null)[] = new Array(data.length).fill(null)
+  let sum = 0
+  for (let i = 0; i < data.length; i++) {
+    sum += data[i]!.close
+    if (i >= period) sum -= data[i - period]!.close
+    if (i >= period - 1) result[i] = sum / period
+  }
+  return result
+}
+
+// ── Zoom / Pan ─────────────────────────────────────────────
+const viewStart = ref(0)
+const viewEnd   = ref(0)
+
+let isDragging  = false
+let dragStartX  = 0
+let dragStartVS = 0
+let dragSpan    = 0
+
+function initView() {
+  const n = prices.value?.length ?? 0
+  viewStart.value = 0
+  viewEnd.value   = n
+}
+
+function clampView(s: number, e: number, n: number): { s: number; e: number } {
+  const minSpan = Math.min(20, n)
+  s = Math.max(0, Math.round(s))
+  e = Math.min(n, Math.round(e))
+  if (e - s < minSpan) {
+    if (e >= n) s = Math.max(0, n - minSpan)
+    else        e = Math.min(n, s + minSpan)
+  }
+  return { s, e }
+}
+
+// ── Horizontal Lines ───────────────────────────────────────
+const hLines = ref<number[]>([])
+const isDrawMode = ref(false)
+
+function priceAtY(clientY: number): number | null {
+  const data = prices.value
+  if (!data?.length || !canvasWrap.value) return null
+  const wrap = canvasWrap.value
+  const rect = wrap.getBoundingClientRect()
+  const y = clientY - rect.top
+  const H = CHART_H
+  const priceH = Math.round((H - PAD_T - PAD_B - GAP_V) * PRICE_RATIO)
+  if (y < PAD_T || y > PAD_T + priceH) return null
+  const vs = viewStart.value
+  const ve = viewEnd.value
+  const slice = data.slice(vs, ve)
+  if (!slice.length) return null
+  const pMin = slice.reduce((m, d) => Math.min(m, d.low), Infinity)  * 0.9975
+  const pMax = slice.reduce((m, d) => Math.max(m, d.high), -Infinity) * 1.0025
+  return pMax - (pMax - pMin) * ((y - PAD_T) / priceH)
+}
+
 const CHART_H   = 460
 const PRICE_RATIO = 0.73
 const PAD_R   = 68   // right: price labels
@@ -109,18 +177,23 @@ function drawChart() {
     return
   }
 
-  const n = data.length
+  const vs = Math.max(0, viewStart.value)
+  const ve = Math.min(viewEnd.value, data.length)
+  const slice = data.slice(vs, ve)
+  const n = slice.length
+  if (n === 0) return
+
   const barW  = drawW / n
   const candW = Math.max(1, Math.min(barW * 0.65, 14))
 
-  // Price range
-  const pMin = Math.min(...data.map(d => d.low))  * 0.9975
-  const pMax = Math.max(...data.map(d => d.high)) * 1.0025
-  const vMax = Math.max(...data.map(d => d.volume)) * 1.05 || 1
+  // Price range from visible slice
+  const pMin = slice.reduce((m, d) => Math.min(m, d.low), Infinity)   * 0.9975
+  const pMax = slice.reduce((m, d) => Math.max(m, d.high), -Infinity) * 1.0025
+  const vMax = (slice.reduce((m, d) => Math.max(m, d.volume), 0) * 1.05) || 1
 
-  const xOf     = (i: number) => i * barW + barW / 2
-  const yPrice  = (p: number) => PAD_T + priceH * (1 - (p - pMin) / (pMax - pMin))
-  const yVol    = (v: number) => volTop + volH * (1 - v / vMax)
+  const xOf    = (i: number) => i * barW + barW / 2
+  const yPrice = (p: number) => PAD_T + priceH * (1 - (p - pMin) / (pMax - pMin))
+  const yVol   = (v: number) => volTop + volH * (1 - v / vMax)
 
   // ── Grid lines (price area)
   ctx.strokeStyle = c.grid
@@ -149,7 +222,7 @@ function drawChart() {
   ctx.font = '10.5px "DM Sans", system-ui, sans-serif'
   for (let i = 0; i < n; i += step) {
     const x = xOf(i)
-    const date = data[i]!.date.split('T')[0]!
+    const date = slice[i]!.date.split('T')[0]!
     ctx.fillText(date.substring(5), x, H - 6)  // MM-DD
   }
 
@@ -160,7 +233,7 @@ function drawChart() {
 
   // ── Candles
   for (let i = 0; i < n; i++) {
-    const d = data[i]!
+    const d = slice[i]!
     const x = xOf(i)
     const isUp = d.close >= d.open
     const col  = isUp ? c.up : c.dn
@@ -184,17 +257,58 @@ function drawChart() {
   const upVolAlpha  = isDark.value ? 'rgba(224,82,82,0.32)'  : 'rgba(201,53,53,0.28)'
   const dnVolAlpha  = isDark.value ? 'rgba(61,170,107,0.32)' : 'rgba(31,138,80,0.28)'
   for (let i = 0; i < n; i++) {
-    const d = data[i]!
+    const d = slice[i]!
     const x = xOf(i)
     const top = yVol(d.volume)
     ctx.fillStyle = d.close >= d.open ? upVolAlpha : dnVolAlpha
     ctx.fillRect(x - candW / 2, top, candW, volTop + volH - top)
   }
 
+  // ── MA Lines (use full data for warmup, draw only visible range)
+  ctx.setLineDash([])
+  for (const ma of maLines.value) {
+    if (!ma.enabled) continue
+    const maValues = calcMA(data, ma.period)
+    ctx.beginPath()
+    ctx.strokeStyle = ma.color
+    ctx.lineWidth   = 1.5
+    let started = false
+    for (let i = 0; i < n; i++) {
+      const mv = maValues[vs + i]
+      if (mv == null) { started = false; continue }
+      const x = xOf(i)
+      const y = yPrice(mv)
+      if (!started) { ctx.moveTo(x, y); started = true }
+      else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+
+  // ── Horizontal Lines
+  for (const price of hLines.value) {
+    const y = yPrice(price)
+    if (y < PAD_T - 6 || y > PAD_T + priceH + 6) continue
+    const hCol = isDark.value ? 'rgba(255,220,80,0.65)' : 'rgba(140,100,0,0.75)'
+    ctx.strokeStyle = hCol
+    ctx.lineWidth   = 1
+    ctx.setLineDash([5, 4])
+    ctx.beginPath()
+    ctx.moveTo(0, y)
+    ctx.lineTo(drawW, y)
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.fillStyle  = hCol
+    ctx.textAlign  = 'right'
+    ctx.font       = 'bold 10px "DM Sans", system-ui, sans-serif'
+    ctx.fillText(price.toFixed(2), W - 4, y - 3)
+  }
+  ctx.setLineDash([])
+
   // ── Crosshair
   const hi = hoveredIdx.value
-  if (hi !== null && hi >= 0 && hi < n) {
-    const x = xOf(hi)
+  if (hi !== null && hi >= vs && hi < ve) {
+    const localI = hi - vs
+    const x = xOf(localI)
     const d = data[hi]!
     ctx.strokeStyle = c.xhair
     ctx.lineWidth = 1
@@ -215,35 +329,108 @@ function drawChart() {
   }
 }
 
+
 function onMouseMove(e: MouseEvent) {
-  const canvas = canvasRef.value
-  const wrap   = canvasWrap.value
-  if (!canvas || !wrap || !prices.value?.length) return
-  const rect = wrap.getBoundingClientRect()
-  const x = e.clientX - rect.left
+  const wrap = canvasWrap.value
+  if (!wrap || !prices.value?.length) return
+  const rect  = wrap.getBoundingClientRect()
+  const x     = e.clientX - rect.left
+  const vs    = viewStart.value
+  const ve    = viewEnd.value
   const drawW = wrap.clientWidth - PAD_R
-  const n = prices.value.length
-  const barW = drawW / n
-  const idx = Math.floor(x / barW)
-  hoveredIdx.value = idx >= 0 && idx < n ? idx : null
+  const visN  = ve - vs
+  if (visN <= 0) return
+  const barW    = drawW / visN
+  const localI  = Math.floor(x / barW)
+  const idx     = vs + localI
+  hoveredIdx.value = (idx >= vs && idx < ve) ? idx : null
+
+  if (isDragging && !isDrawMode.value) {
+    const dx   = e.clientX - dragStartX
+    const barsPerPx = dragSpan / drawW
+    const shift = Math.round(-dx * barsPerPx)
+    const cv = clampView(dragStartVS + shift, dragStartVS + shift + dragSpan, prices.value.length)
+    viewStart.value = cv.s
+    viewEnd.value   = cv.e
+  }
   drawChart()
 }
 
 function onMouseLeave() {
   hoveredIdx.value = null
+  isDragging = false
+  drawChart()
+}
+
+function onMouseDown(e: MouseEvent) {
+  if (!prices.value?.length) return
+  if (e.button === 2) return  // handled by onContextMenu
+  if (isDrawMode.value) {
+    const p = priceAtY(e.clientY)
+    if (p !== null) {
+      hLines.value = [...hLines.value, parseFloat(p.toFixed(2))]
+      drawChart()
+    }
+  } else {
+    isDragging  = true
+    dragStartX  = e.clientX
+    dragStartVS = viewStart.value
+    dragSpan    = viewEnd.value - viewStart.value
+  }
+}
+
+function onMouseUp() {
+  isDragging = false
+}
+
+function onContextMenu(e: MouseEvent) {
+  e.preventDefault()
+  if (hLines.value.length === 0) return
+  const p = priceAtY(e.clientY)
+  if (p === null) return
+  const data  = prices.value!
+  const slice = data.slice(viewStart.value, viewEnd.value)
+  const pMin  = slice.reduce((m, d) => Math.min(m, d.low), Infinity)   * 0.9975
+  const pMax  = slice.reduce((m, d) => Math.max(m, d.high), -Infinity) * 1.0025
+  const range = pMax - pMin || 1
+  const nearest = hLines.value.reduce((a, b) => Math.abs(b - p) < Math.abs(a - p) ? b : a)
+  if (Math.abs(nearest - p) / range < 0.05) {
+    hLines.value = hLines.value.filter(h => h !== nearest)
+    drawChart()
+  }
+}
+
+function onWheel(ev: WheelEvent) {
+  ev.preventDefault()
+  const data = prices.value
+  if (!data?.length || !canvasWrap.value) return
+  const n    = data.length
+  const wrap = canvasWrap.value
+  const drawW  = wrap.clientWidth - PAD_R
+  const rect   = wrap.getBoundingClientRect()
+  const mouseX = ev.clientX - rect.left
+  const ratio  = Math.min(1, Math.max(0, mouseX / drawW))
+  const span   = viewEnd.value - viewStart.value
+  const factor = ev.deltaY > 0 ? 1.15 : (1 / 1.15)
+  const newSpan = Math.min(n, Math.max(20, Math.round(span * factor)))
+  const pivot   = viewStart.value + ratio * span
+  const cv = clampView(pivot - ratio * newSpan, pivot - ratio * newSpan + newSpan, n)
+  viewStart.value = cv.s
+  viewEnd.value   = cv.e
   drawChart()
 }
 
 function initChart() {
   if (!canvasWrap.value) return
   if (roChart) { roChart.disconnect(); roChart = null }
+  initView()
   drawChart()
   roChart = new ResizeObserver(() => drawChart())
   roChart.observe(canvasWrap.value)
 }
 
 onMounted(async () => { await nextTick(); initChart() })
-watch(prices, async () => { await nextTick(); drawChart() })
+watch(prices, async () => { await nextTick(); initView(); drawChart() })
 watch(isDark, () => drawChart())
 onBeforeUnmount(() => roChart?.disconnect())
 
@@ -519,15 +706,48 @@ function startRefresh() {
       <!-- ══ Chart Panel ══ -->
       <div class="chart-panel">
         <div class="chart-toolbar">
-          <span class="chart-label">日 K 線圖</span>
-          <div class="range-group">
+          <div class="toolbar-left">
+            <span class="chart-label">日 K 線圖</span>
+            <div class="ma-group">
+              <button
+                v-for="ma in maLines"
+                :key="ma.period"
+                class="ma-btn"
+                :class="{ 'ma-btn--active': ma.enabled }"
+                :style="ma.enabled ? { borderColor: ma.color, color: ma.color } : {}"
+                @click="ma.enabled = !ma.enabled; drawChart()"
+              >MA{{ ma.period }}</button>
+            </div>
+          </div>
+          <div class="toolbar-right">
             <button
-              v-for="r in ranges"
-              :key="r.key"
-              class="range-btn"
-              :class="{ 'range-btn--active': activeRange === r.key }"
-              @click="setRange(r)"
-            >{{ r.label }}</button>
+              class="draw-btn"
+              :class="{ 'draw-btn--active': isDrawMode }"
+              :title="isDrawMode ? '點選價格區新增水平線，右鍵移除' : '開啟畫線模式'"
+              @click="isDrawMode = !isDrawMode"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                <line x1="2" y1="8" x2="14" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <circle cx="2" cy="8" r="1.5" fill="currentColor"/>
+                <circle cx="14" cy="8" r="1.5" fill="currentColor"/>
+              </svg>
+              {{ isDrawMode ? '畫線中' : '畫線' }}
+            </button>
+            <button
+              v-if="hLines.length > 0"
+              class="draw-btn"
+              title="清除所有水平線"
+              @click="hLines = []; drawChart()"
+            >清除({{ hLines.length }})</button>
+            <div class="range-group">
+              <button
+                v-for="r in ranges"
+                :key="r.key"
+                class="range-btn"
+                :class="{ 'range-btn--active': activeRange === r.key }"
+                @click="setRange(r)"
+              >{{ r.label }}</button>
+            </div>
           </div>
         </div>
 
@@ -535,7 +755,13 @@ function startRefresh() {
           此股票尚無日 K 資料，請先在首頁點擊「同步日 K 資料」。
         </div>
         <div v-else ref="canvasWrap" class="chart-container"
-          @mousemove="onMouseMove" @mouseleave="onMouseLeave">
+          :class="{ 'chart-container--draw': isDrawMode }"
+          @mousemove="onMouseMove"
+          @mouseleave="onMouseLeave"
+          @mousedown="onMouseDown"
+          @mouseup="onMouseUp"
+          @wheel.prevent="onWheel"
+          @contextmenu="onContextMenu">
           <canvas ref="canvasRef" />
           <!-- Crosshair tooltip -->
           <div
@@ -937,9 +1163,71 @@ function startRefresh() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px;
   border-bottom: 1px solid var(--line);
 }
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ma-group {
+  display: flex;
+  gap: 3px;
+}
+
+.ma-btn {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  background: transparent;
+  color: var(--t3);
+  border: 1px solid var(--line2);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.02em;
+}
+.ma-btn:hover { color: var(--t1); border-color: var(--t2); }
+.ma-btn--active { opacity: 1; }
+
+.draw-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 11px;
+  background: transparent;
+  border: 1px solid var(--line2);
+  border-radius: 6px;
+  color: var(--t3);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.draw-btn:hover { color: var(--t1); border-color: var(--t2); }
+.draw-btn--active {
+  background: color-mix(in oklch, var(--gold) 12%, transparent);
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+.chart-container--draw { cursor: cell; }
 
 .chart-label {
   font-size: 11px;
