@@ -206,9 +206,8 @@ func (r *Runner) fetchAllHistory(s stockInfo) (int, error) {
 	var all []models.DailyPrice
 	emptyStreak := 0
 	const maxEmptyStreak = 3
-	const maxMonths = 360 // 最多回溯 30 年
 
-	for i := 0; i < maxMonths; i++ {
+	for i := 0; ; i++ {
 		t := now.AddDate(0, -i, 0)
 		ym := fmt.Sprintf("%d%02d", t.Year(), t.Month())
 

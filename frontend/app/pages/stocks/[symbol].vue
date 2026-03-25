@@ -58,10 +58,11 @@ let roChart: ResizeObserver | null = null
 // ── MA Lines ───────────────────────────────────────────────
 interface MALine { period: number; color: string; enabled: boolean }
 const maLines = ref<MALine[]>([
-  { period: 5,  color: '#f0a842', enabled: true  },
-  { period: 10, color: '#5b9cf6', enabled: true  },
-  { period: 20, color: '#a78ce8', enabled: true  },
-  { period: 60, color: '#4ecfa8', enabled: false },
+  { period: 5,   color: '#f0a842', enabled: true  },
+  { period: 10,  color: '#5b9cf6', enabled: true  },
+  { period: 24,  color: '#a78ce8', enabled: true  },
+  { period: 72,  color: '#4ecfa8', enabled: false },
+  { period: 120, color: '#e07b5a', enabled: false },
 ])
 
 function calcMA(data: DailyPrice[], period: number): (number | null)[] {
