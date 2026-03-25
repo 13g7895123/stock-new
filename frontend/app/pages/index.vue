@@ -321,52 +321,148 @@ watch(
   { immediate: true },
 )
 
-// ── 單股測試 ──────────────────────────────
-const testSymbolChips = ref('')
-const testingChips = ref(false)
-const testResultChips = ref<{ ok: boolean; symbol?: string; error?: string } | null>(null)
+// ── 單股測試 Modal ─────────────────────────────────────────────
+interface TestStep {
+  id: number
+  text: string
+  status: 'running' | 'done' | 'error' | 'info'
+}
 
-async function testChipsSingle() {
-  const sym = testSymbolChips.value.trim().toUpperCase()
-  if (!sym) return
-  testingChips.value = true
-  testResultChips.value = null
+const testModalOpen    = ref(false)
+const testModalType    = ref<'chips' | 'price' | null>(null)
+const testModalSymbol  = ref('')
+const testModalRunning = ref(false)
+const testModalSteps   = ref<TestStep[]>([])
+const testModalDone    = ref(false)
+const logEl            = ref<HTMLElement | null>(null)
+let _stepId = 0
+
+function _addStep(text: string, status: TestStep['status'] = 'info'): number {
+  const id = ++_stepId
+  testModalSteps.value.push({ id, text, status })
+  nextTick(() => { if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight })
+  return id
+}
+
+function _updateStep(id: number, text: string, status: TestStep['status']) {
+  const s = testModalSteps.value.find(s => s.id === id)
+  if (s) { s.text = text; s.status = status }
+  nextTick(() => { if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight })
+}
+
+function openTestModal(type: 'chips' | 'price') {
+  testModalType.value    = type
+  testModalSymbol.value  = ''
+  testModalSteps.value   = []
+  testModalRunning.value = false
+  testModalDone.value    = false
+  _stepId = 0
+  testModalOpen.value    = true
+}
+
+function closeTestModal() { testModalOpen.value = false }
+
+function _sleep(ms: number) { return new Promise<void>(r => setTimeout(r, ms)) }
+
+async function runTest() {
+  const sym = testModalSymbol.value.trim().toUpperCase()
+  if (!sym || testModalRunning.value) return
+  testModalRunning.value = true
+  testModalDone.value    = false
+  testModalSteps.value   = []
+  _stepId = 0
   try {
-    const res = await $fetch<{ ok: boolean; symbol: string }>('/api/chips/trigger-single', {
-      method: 'POST',
-      body: { symbol: sym },
-    })
-    testResultChips.value = res
-    await refreshChips()
-    startChipsPolling()
-  } catch (err: unknown) {
-    const e = err as { response?: { _data?: { error?: string } }; data?: { error?: string } }
-    testResultChips.value = { ok: false, error: e?.response?._data?.error || e?.data?.error || '觸發失敗' }
+    if (testModalType.value === 'chips') await _runChipsTest(sym)
+    else                                  await _runPriceTest(sym)
   } finally {
-    testingChips.value = false
+    testModalRunning.value = false
+    testModalDone.value    = true
   }
 }
 
-const testSymbolPrice = ref('')
-const testingPrice = ref(false)
-const testResultPrice = ref<{ ok: boolean; symbol?: string; market?: string; records?: number; error?: string } | null>(null)
+async function _runChipsTest(sym: string) {
+  const s1 = _addStep('[ 1 / 5 ]  驗證代號格式', 'running')
+  await _sleep(100)
+  if (!/^[1-9][0-9]{3}$/.test(sym)) {
+    _updateStep(s1, `[ 1 / 5 ]  ✕  「${sym}」格式不符：須為 4 碼普通股代號（首碼非 0）`, 'error')
+    return
+  }
+  _updateStep(s1, `[ 1 / 5 ]  ✓  代號格式正確：${sym} 符合 ^[1-9][0-9]{3}$ 規則`, 'done')
 
-async function testPriceSingle() {
-  const sym = testSymbolPrice.value.trim().toUpperCase()
-  if (!sym) return
-  testingPrice.value = true
-  testResultPrice.value = null
+  const s2 = _addStep('[ 2 / 5 ]  觸發爬取  POST /api/chips/trigger-single', 'running')
   try {
-    const res = await $fetch<{ ok: boolean; symbol: string; market: string; records: number }>('/api/scraper/prices/all/test', {
-      method: 'POST',
-      body: { symbol: sym },
-    })
-    testResultPrice.value = res
+    await $fetch('/api/chips/trigger-single', { method: 'POST', body: { symbol: sym } })
+    _updateStep(s2, `[ 2 / 5 ]  ✓  後端已接受，籌碼爬取任務已排入佇列`, 'done')
   } catch (err: unknown) {
     const e = err as { response?: { _data?: { error?: string } }; data?: { error?: string } }
-    testResultPrice.value = { ok: false, error: e?.response?._data?.error || e?.data?.error || '測試失敗' }
-  } finally {
-    testingPrice.value = false
+    _updateStep(s2, `[ 2 / 5 ]  ✕  觸發失敗：${e?.response?._data?.error ?? e?.data?.error ?? '未知錯誤'}`, 'error')
+    return
+  }
+
+  _addStep(`[ 3 / 5 ]  Playwright 爬蟲啟動：瀏覽 norway.twsthr.info 解析持股分布圖`, 'info')
+  _addStep(`[ 4 / 5 ]  資料將寫入 PostgreSQL  ·  stock_holders 資料表`, 'info')
+  const s5 = _addStep('[ 5 / 5 ]  監控爬取狀態（每 2s 輪詢 /api/chips/status）…', 'running')
+  const t0 = Date.now()
+  const maxWait = 120_000
+  while (Date.now() - t0 < maxWait) {
+    await _sleep(2000)
+    try {
+      const st = await $fetch<ChipsStatus>('/api/chips/status')
+      const sec = Math.round((Date.now() - t0) / 1000)
+      if (st.status === 'running') {
+        _updateStep(s5, `[ 5 / 5 ]  爬取進行中（已等 ${sec}s）${st.message ? '  ·  ' + st.message : ''}`, 'running')
+      } else if (st.status === 'completed') {
+        _updateStep(s5, `[ 5 / 5 ]  ✓  爬取完成，耗時 ${sec}s  ·  成功 ${st.success ?? 0} 檔 / 失敗 ${st.fail ?? 0} 檔`, 'done')
+        _addStep(`📋  資料已寫入 stock_holders 資料表`, 'info')
+        _addStep(`📍  查閱：前往 /stocks/${sym}  →  滾動至「籌碼金字塔」區塊查看持股分布`, 'info')
+        await refreshChips()
+        startChipsPolling()
+        return
+      } else if (st.status === 'failed') {
+        _updateStep(s5, `[ 5 / 5 ]  ✕  爬取失敗：${st.message ?? '未知原因'}`, 'error')
+        _addStep(`💡  排查：docker logs scraper  —  查看 Playwright 錯誤訊息`, 'info')
+        return
+      }
+    } catch { /* polling, keep trying */ }
+  }
+  _updateStep(s5, `[ 5 / 5 ]  ⚠  等待逾時（120s），任務可能仍在背景執行中`, 'error')
+  _addStep(`💡  至主畫面「籌碼金字塔」卡確認狀態，或執行 docker logs scraper`, 'info')
+}
+
+async function _runPriceTest(sym: string) {
+  const s1 = _addStep('[ 1 / 5 ]  驗證代號格式', 'running')
+  await _sleep(100)
+  if (!/^[1-9][0-9]{3}$/.test(sym)) {
+    _updateStep(s1, `[ 1 / 5 ]  ✕  「${sym}」格式不符：須為 4 碼普通股代號（首碼非 0）`, 'error')
+    return
+  }
+  _updateStep(s1, `[ 1 / 5 ]  ✓  代號格式正確：${sym} 符合 ^[1-9][0-9]{3}$ 規則`, 'done')
+
+  _addStep(`[ 2 / 5 ]  確認股票存在於資料庫，辨識 TWSE（上市）或 TPEX（上櫃）市場`, 'info')
+  _addStep(`[ 3 / 5 ]  依市場選擇 API 端點，逐月向 TWSE / TPEX OpenAPI 發出 GET 請求`, 'info')
+  _addStep(`[ 4 / 5 ]  每月請求間隔 120ms，錯誤後 300ms，最多爬取 360 個月（~ 30 年歷史）`, 'info')
+  const s5 = _addStep('[ 5 / 5 ]  POST /api/scraper/prices/all/test  →  同步執行中…', 'running')
+  const t0 = Date.now()
+  const timer = setInterval(() => {
+    const sec = Math.round((Date.now() - t0) / 1000)
+    _updateStep(s5, `[ 5 / 5 ]  後端逐月拉取中，已等待 ${sec}s（同步執行，請耐心等候）`, 'running')
+  }, 3000)
+  try {
+    const res = await $fetch<{ ok: boolean; symbol: string; market: string; records: number }>(
+      '/api/scraper/prices/all/test',
+      { method: 'POST', body: { symbol: sym } },
+    )
+    clearInterval(timer)
+    const sec = Math.round((Date.now() - t0) / 1000)
+    _updateStep(s5, `[ 5 / 5 ]  ✓  拉取完成，耗時 ${sec}s  ·  市場：${res.market}`, 'done')
+    _addStep(`📋  寫入 PostgreSQL  ·  daily_prices 資料表：共 ${res.records} 筆 OHLCV 記錄（日期 / 開高低收 / 成交量）`, 'done')
+    _addStep(`📍  查閱 K 線：前往 /stocks/${sym}  →  K 線圖區塊  →  可查看完整歷史蠟燭圖與成交量`, 'info')
+    _addStep(`📎  SQL 驗證：SELECT count(*), min(date), max(date) FROM daily_prices WHERE symbol='${sym}'`, 'info')
+  } catch (err: unknown) {
+    clearInterval(timer)
+    const e = err as { response?: { _data?: { error?: string } }; data?: { error?: string } }
+    _updateStep(s5, `[ 5 / 5 ]  ✕  請求失敗：${e?.response?._data?.error ?? e?.data?.error ?? '未知錯誤'}`, 'error')
+    _addStep(`💡  排查：1) 確認 stocks 資料表有 ${sym}  2) docker logs backend 查看詳細錯誤`, 'info')
   }
 }
 
@@ -778,16 +874,10 @@ const settingsOpen = ref(false)
               </NuxtLink>
             </div>
           </div>
-          <!-- 單股測試 -->
-          <div class="test-row">
-            <input v-model="testSymbolChips" class="test-input" type="text" placeholder="單股測試，如 2330" @keyup.enter="testChipsSingle" />
-            <button class="test-btn" :disabled="testingChips || !testSymbolChips" @click="testChipsSingle">
-              {{ testingChips ? '執行中…' : '測試' }}
-            </button>
-            <span v-if="testResultChips" class="test-result" :class="testResultChips.ok ? 'test-result--ok' : 'test-result--err'">
-              {{ testResultChips.ok ? `✓ ${testResultChips.symbol} 已觸發` : `✕ ${testResultChips.error}` }}
-            </span>
-          </div>
+          <button class="test-open-btn" @click="openTestModal('chips')">
+            <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
+            單股測試
+          </button>
           <button
             class="action-btn"
             :class="{ 'action-btn--busy': chipsTriggering || chipsStatus?.status === 'running' }"
@@ -848,16 +938,10 @@ const settingsOpen = ref(false)
               <p class="chips-progress__text">{{ priceSyncStatus?.message || '爬取進行中…' }}</p>
             </div>
           </div>
-          <!-- 單股測試 -->
-          <div class="test-row">
-            <input v-model="testSymbolPrice" class="test-input" type="text" placeholder="單股測試，如 2330" @keyup.enter="testPriceSingle" />
-            <button class="test-btn" :disabled="testingPrice || !testSymbolPrice" @click="testPriceSingle">
-              {{ testingPrice ? '執行中…' : '測試' }}
-            </button>
-            <span v-if="testResultPrice" class="test-result" :class="testResultPrice.ok ? 'test-result--ok' : 'test-result--err'">
-              {{ testResultPrice.ok ? `✓ ${testResultPrice.symbol}（${testResultPrice.market}）寫入 ${testResultPrice.records} 筆` : `✕ ${testResultPrice.error}` }}
-            </span>
-          </div>
+          <button class="test-open-btn" @click="openTestModal('price')">
+            <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
+            單股測試
+          </button>
           <button
             class="action-btn"
             :class="{ 'action-btn--busy': priceSyncTriggering || priceSyncStatus?.status === 'running' }"
@@ -1053,16 +1137,10 @@ const settingsOpen = ref(false)
             <span class="cr-value">{{ chipsFailureDetail }}</span>
           </div>
 
-          <!-- 單股測試 -->
-          <div class="test-row">
-            <input v-model="testSymbolChips" class="test-input" type="text" placeholder="單股測試，如 2330" @keyup.enter="testChipsSingle" />
-            <button class="test-btn" :disabled="testingChips || !testSymbolChips" @click="testChipsSingle">
-              {{ testingChips ? '執行中…' : '測試' }}
-            </button>
-            <span v-if="testResultChips" class="test-result" :class="testResultChips.ok ? 'test-result--ok' : 'test-result--err'">
-              {{ testResultChips.ok ? `✓ ${testResultChips.symbol} 已觸發` : `✕ ${testResultChips.error}` }}
-            </span>
-          </div>
+          <button class="test-open-btn" @click="openTestModal('chips')">
+            <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
+            單股測試
+          </button>
 
           <div class="chips-actions">
             <button
@@ -1138,16 +1216,10 @@ const settingsOpen = ref(false)
             <p class="cp-text">{{ priceSyncStatus?.message || '爬取進行中…' }}</p>
           </div>
 
-          <!-- 單股測試 -->
-          <div class="test-row">
-            <input v-model="testSymbolPrice" class="test-input" type="text" placeholder="單股測試，如 2330" @keyup.enter="testPriceSingle" />
-            <button class="test-btn" :disabled="testingPrice || !testSymbolPrice" @click="testPriceSingle">
-              {{ testingPrice ? '執行中…' : '測試' }}
-            </button>
-            <span v-if="testResultPrice" class="test-result" :class="testResultPrice.ok ? 'test-result--ok' : 'test-result--err'">
-              {{ testResultPrice.ok ? `✓ ${testResultPrice.symbol}（${testResultPrice.market}）寫入 ${testResultPrice.records} 筆` : `✕ ${testResultPrice.error}` }}
-            </span>
-          </div>
+          <button class="test-open-btn" @click="openTestModal('price')">
+            <svg width="9" height="10" viewBox="0 0 9 10" fill="none" aria-hidden="true"><path d="M1 1l7 4-7 4V1Z" fill="currentColor"/></svg>
+            單股測試
+          </button>
 
           <div class="chips-actions">
             <button
@@ -1170,6 +1242,67 @@ const settingsOpen = ref(false)
 
       </div>
     </main>
+
+    <!-- ══ 單股測試 Modal ══ -->
+    <div v-if="testModalOpen" class="tm-overlay" @click.self="closeTestModal">
+      <div class="tm-panel" role="dialog" aria-modal="true">
+        <div class="tm-header">
+          <span class="tm-badge">TEST</span>
+          <span class="tm-title">{{ testModalType === 'chips' ? '籌碼金字塔 · 單股測試' : '全量日K · 單股測試' }}</span>
+          <button class="tm-close" aria-label="關閉" @click="closeTestModal">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="tm-input-row">
+          <span class="tm-prompt">$</span>
+          <input
+            v-model="testModalSymbol"
+            class="tm-input"
+            type="text"
+            placeholder="輸入股票代號，如 2330"
+            maxlength="6"
+            autocomplete="off"
+            spellcheck="false"
+            :disabled="testModalRunning"
+            @keyup.enter="runTest"
+          />
+          <button class="tm-run-btn" :disabled="testModalRunning || !testModalSymbol" @click="runTest">
+            <span v-if="testModalRunning" class="tm-spin">◌</span>
+            <template v-else>▶ 開始</template>
+          </button>
+        </div>
+        <div ref="logEl" class="tm-log">
+          <div v-if="!testModalSteps.length" class="tm-empty">
+            輸入四碼股票代號後點擊「▶ 開始」，可查看完整逐步執行過程。
+          </div>
+          <div
+            v-for="step in testModalSteps"
+            :key="step.id"
+            class="tm-line"
+            :class="`tm-line--${step.status}`"
+          >
+            <span class="tm-icon">
+              <span v-if="step.status === 'running'" class="tm-spin">◌</span>
+              <span v-else-if="step.status === 'done'">✓</span>
+              <span v-else-if="step.status === 'error'">✕</span>
+              <span v-else class="tm-dot">·</span>
+            </span>
+            <span class="tm-text">{{ step.text }}</span>
+          </div>
+        </div>
+        <div class="tm-footer">
+          <button class="tm-btn-cancel" @click="closeTestModal">{{ testModalDone ? '關閉' : '取消' }}</button>
+          <NuxtLink
+            v-if="testModalDone && testModalSymbol"
+            :to="`/stocks/${testModalSymbol.trim().toUpperCase()}`"
+            class="tm-btn-go"
+            @click="closeTestModal"
+          >
+            前往查看 {{ testModalSymbol.trim().toUpperCase() }} →
+          </NuxtLink>
+        </div>
+      </div>
+    </div>
 
   </div>
 </template>
@@ -2453,57 +2586,247 @@ const settingsOpen = ref(false)
 }
 
 /* ═══════════════════════════════════════
-   Test Row (單股測試)
+   Test Open Button
 ═══════════════════════════════════════ */
-.test-row {
+.test-open-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px dashed var(--line2);
+  border-radius: 7px;
+  color: var(--t3);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color 0.18s, border-color 0.18s, background 0.18s, border-style 0.18s;
+  margin-top: 10px;
+}
+.test-open-btn:hover {
+  color: var(--blue);
+  border-color: var(--blue);
+  border-style: solid;
+  background: color-mix(in oklch, var(--blue) 8%, transparent);
+}
+
+/* ═══════════════════════════════════════
+   Test Modal
+═══════════════════════════════════════ */
+.tm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: color-mix(in oklch, oklch(5% 0.010 256) 72%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: overlay-in 0.16s ease;
+}
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.tm-panel {
+  /* self-contained dark tokens — works regardless of page theme */
+  --tp-bg:   oklch(10%  0.018 256);
+  --tp-s1:   oklch(14%  0.020 257);
+  --tp-s2:   oklch(18%  0.022 258);
+  --tp-line: oklch(24%  0.022 258);
+  --tp-ln2:  oklch(34%  0.022 258);
+  --tp-t1:   oklch(96%  0.006 218);
+  --tp-t2:   oklch(72%  0.013 240);
+  --tp-t3:   oklch(48%  0.012 240);
+  --tp-blue: oklch(63%  0.20  264);
+  --tp-gold: oklch(76%  0.13  82);
+  --tp-dn:   oklch(64%  0.18  148);
+  --tp-up:   oklch(62%  0.18  22);
+
+  width: 100%;
+  max-width: 600px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--tp-s1);
+  border: 1px solid var(--tp-ln2);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 32px 96px color-mix(in oklch, oklch(0% 0 0) 55%, transparent);
+  animation: panel-in 0.18s cubic-bezier(0.34, 1.28, 0.64, 1);
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.tm-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--tp-line);
+  flex-shrink: 0;
+  background: var(--tp-bg);
+}
+.tm-badge {
+  padding: 2px 8px;
+  background: color-mix(in oklch, var(--tp-gold) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--tp-gold) 45%, transparent);
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--tp-gold);
+  flex-shrink: 0;
+}
+.tm-title {
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--tp-t1);
+  letter-spacing: -0.01em;
+}
+.tm-close {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: 1px solid var(--tp-line);
+  border-radius: 7px;
+  color: var(--tp-t3);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.tm-close:hover { background: var(--tp-s2); border-color: var(--tp-ln2); color: var(--tp-t1); }
+
+.tm-input-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 12px;
-  padding: 10px 12px;
-  background: var(--s2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--tp-line);
+  flex-shrink: 0;
+  background: var(--tp-s2);
 }
-
-.test-input {
-  flex: 1;
-  min-width: 110px;
-  height: 30px;
-  padding: 0 10px;
-  background: var(--s3);
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--t1);
-  font-size: 12.5px;
+.tm-prompt {
   font-family: var(--mono);
+  font-size: 16px;
+  color: var(--tp-blue);
+  flex-shrink: 0;
+  user-select: none;
+}
+.tm-input {
+  flex: 1;
+  height: 34px;
+  padding: 0 12px;
+  background: var(--tp-bg);
+  border: 1px solid var(--tp-line);
+  border-radius: 8px;
+  color: var(--tp-t1);
+  font-size: 15px;
+  font-family: var(--mono);
+  letter-spacing: 0.05em;
   outline: none;
   transition: border-color 0.2s;
 }
-.test-input:focus { border-color: var(--blue); }
-.test-input::placeholder { color: var(--t3); }
-
-.test-btn {
-  height: 30px;
-  padding: 0 14px;
-  background: var(--s3);
-  border: 1px solid var(--line2);
-  border-radius: 7px;
-  color: var(--t2);
-  font-size: 12px;
+.tm-input:focus { border-color: var(--tp-blue); }
+.tm-input::placeholder { color: var(--tp-t3); font-family: var(--font); font-size: 13px; letter-spacing: 0; }
+.tm-input:disabled { opacity: 0.45; }
+.tm-run-btn {
+  height: 34px;
+  padding: 0 18px;
+  background: var(--tp-blue);
+  border: none;
+  border-radius: 8px;
+  color: oklch(97% 0.005 220);
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: opacity 0.15s;
 }
-.test-btn:hover:not(:disabled) { background: var(--blue2); border-color: var(--blue); color: var(--t1); }
-.test-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.tm-run-btn:hover:not(:disabled) { opacity: 0.82; }
+.tm-run-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
-.test-result {
-  font-size: 12px;
+.tm-log {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 160px;
+  max-height: 360px;
+  padding: 14px 20px;
+  background: var(--tp-bg);
   font-family: var(--mono);
-  white-space: nowrap;
+  font-size: 12.5px;
+  line-height: 1.75;
+  scrollbar-width: thin;
+  scrollbar-color: var(--tp-ln2) transparent;
 }
-.test-result--ok  { color: var(--dn); }
-.test-result--err { color: var(--up); }
+.tm-empty {
+  color: var(--tp-t3);
+  font-family: var(--font);
+  font-size: 13px;
+  text-align: center;
+  padding: 28px 0;
+  line-height: 1.6;
+}
+.tm-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 1px 0;
+  color: var(--tp-t3);
+}
+.tm-line--running { color: var(--tp-gold); }
+.tm-line--done    { color: var(--tp-dn); }
+.tm-line--error   { color: var(--tp-up); }
+.tm-line--info    { color: var(--tp-t2); }
+.tm-icon { flex-shrink: 0; width: 14px; text-align: center; margin-top: 1px; }
+.tm-dot  { color: var(--tp-t3); opacity: 0.45; }
+.tm-text { flex: 1; word-break: break-all; }
+.tm-spin { display: inline-block; animation: spin 1.1s linear infinite; }
+
+.tm-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--tp-line);
+  flex-shrink: 0;
+  background: var(--tp-s2);
+}
+.tm-btn-cancel {
+  height: 32px;
+  padding: 0 16px;
+  background: transparent;
+  border: 1px solid var(--tp-ln2);
+  border-radius: 8px;
+  color: var(--tp-t2);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tm-btn-cancel:hover { background: var(--tp-s1); color: var(--tp-t1); }
+.tm-btn-go {
+  height: 32px;
+  padding: 0 16px;
+  background: color-mix(in oklch, var(--tp-blue) 15%, transparent);
+  border: 1px solid var(--tp-blue);
+  border-radius: 8px;
+  color: var(--tp-blue);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  transition: background 0.15s, color 0.15s;
+}
+.tm-btn-go:hover { background: var(--tp-blue); color: oklch(97% 0.005 220); }
 </style>
