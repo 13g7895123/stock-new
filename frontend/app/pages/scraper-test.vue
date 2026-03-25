@@ -179,7 +179,7 @@ const rawSymbol  = ref('2330')
 const rawYyyymm  = ref(() => {
   const d = new Date()
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`
-}())
+})
 const rawLoading = ref(false)
 const rawError   = ref('')
 const rawData    = ref<DebugRawMonth | null>(null)
@@ -398,7 +398,7 @@ async function fetchBroker() {
       <!-- ════════════════════════════════════════ -->
       <!-- Tab 2: 原始資料解析                        -->
       <!-- ════════════════════════════════════════ -->
-      <template v-else>
+      <template v-else-if="activeTab === 'raw'">
 
         <!-- 控制列 -->
         <div class="ctrl-row">
