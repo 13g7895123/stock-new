@@ -7,7 +7,7 @@ export default defineNuxtConfig({
     head: {
       title: '台股監控系統',
       link: [
-        { rel: 'icon', type: 'image/jpeg', href: '/9JGckX2a.jpg' },
+        { rel: 'icon', type: 'image/png', href: '/9JGckX2a.png' },
       ],
     },
   },

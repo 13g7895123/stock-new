@@ -89,6 +89,14 @@ func Setup(db *gorm.DB) *gin.Engine {
 			debugGroup.GET("/raw-month", debugHandler.RawMonth)
 			debugGroup.GET("/broker-fetch", debugHandler.BrokerFetch)
 		}
+
+		dbViewerHandler := handlers.NewDBViewerHandler(db)
+		adminGroup := api.Group("/admin/db")
+		{
+			adminGroup.GET("/tables", dbViewerHandler.ListTables)
+			adminGroup.GET("/tables/:name/columns", dbViewerHandler.TableColumns)
+			adminGroup.GET("/tables/:name/data", dbViewerHandler.TableData)
+		}
 	}
 
 	return r
