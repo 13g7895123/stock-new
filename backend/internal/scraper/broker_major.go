@@ -45,11 +45,11 @@ var MajorBrokerBaseURLs = []string{
 
 // MajorFetchResult 爬取主力進出的結果與診斷資訊
 type MajorFetchResult struct {
-	Source   string                    // 成功的 base URL
-	URL      string                    // 完整請求 URL
-	DataDate time.Time                 // 頁面資料日期
+	Source   string    // 成功的 base URL
+	URL      string    // 完整請求 URL
+	DataDate time.Time // 頁面資料日期
 	Records  []models.MajorBrokerRecord
-	Tried    []string                  // 嘗試過但失敗的 URL
+	Tried    []string // 嘗試過但失敗的 URL
 }
 
 // BuildMajorURL 建構主力進出請求 URL。
@@ -141,8 +141,9 @@ func fetchAndParseMajor(symbol, url string, days int) (time.Time, []models.Major
 // parseMajorTable 解析 #oMainTable 中的買超 / 賣超資料列。
 //
 // 結構：每個資料列包含 10 個 TD：
-//   [0] 買超券商(t4t1)  [1-3] 買進/賣出/買超(t3n1)  [4] 比重(t3n1)
-//   [5] 賣超券商(t4t1)  [6-8] 買進/賣出/賣超(t3n1)  [9] 比重(t3n1)
+//
+//	[0] 買超券商(t4t1)  [1-3] 買進/賣出/買超(t3n1)  [4] 比重(t3n1)
+//	[5] 賣超券商(t4t1)  [6-8] 買進/賣出/賣超(t3n1)  [9] 比重(t3n1)
 func parseMajorTable(doc *goquery.Document, symbol string, dataDate time.Time, days int) []models.MajorBrokerRecord {
 	table := doc.Find("#oMainTable")
 	if table.Length() == 0 {
