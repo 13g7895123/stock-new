@@ -95,6 +95,19 @@ var featureCatalog = []FeatureInfo{
 			},
 		},
 	},
+	{
+		ID:          "major_chips",
+		Label:       "主力進出（券商分點）",
+		Description: "從多家券商 MoneyDJ 平台爬取主力券商買賣超資料，支援今日 / 近5/10/20/40/60 日累計",
+		Category:    "scraper",
+		Schemes: []SchemeInfo{
+			{
+				ID:          "go_http",
+				Label:       "Go HTTP（內建）",
+				Description: "直接 HTTP 爬取 Big5 HTML，速度 <1秒/支，5個域名 failover，無需額外服務",
+			},
+		},
+	},
 }
 
 // 預設 config（當 DB 尚無設定時使用）
@@ -115,6 +128,12 @@ var defaultConfigs = map[string]FeatureConfig{
 		Primary:         "twse_tpex_api",
 		FallbackEnabled: true,
 		Fallback:        "broker_api",
+		FallbackTrigger: "error",
+	},
+	"major_chips": {
+		Primary:         "go_http",
+		FallbackEnabled: false,
+		Fallback:        "",
 		FallbackTrigger: "error",
 	},
 }
