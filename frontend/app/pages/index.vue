@@ -223,6 +223,7 @@ watch(
 onBeforeUnmount(() => {
   stopChipsPolling()
   stopPriceSyncPolling()
+  stopMajorPolling()
 })
 
 // ── 全股票歷史日K批次爬取 ──────────────────────────────
@@ -317,6 +318,101 @@ watch(
   (status) => {
     if (status === 'running') startPriceSyncPolling()
     else stopPriceSyncPolling()
+  },
+  { immediate: true },
+)
+
+// ── 主力進出批次爬取 ────────────────────────────────────
+interface MajorStatus {
+  status: 'never' | 'running' | 'completed' | 'failed'
+  days?: number
+  started_at?: string
+  completed_at?: string
+  total?: number
+  success?: number
+  fail?: number
+  message?: string
+}
+
+const { data: majorStatus, refresh: refreshMajor } = await useFetch<MajorStatus>('/api/major/status')
+
+const majorTriggering = ref(false)
+const majorError = ref('')
+const majorDays = ref(1)
+let majorPollTimer: ReturnType<typeof setInterval> | null = null
+
+function startMajorPolling() {
+  if (majorPollTimer) return
+  majorPollTimer = setInterval(() => { refreshMajor() }, 3000)
+}
+function stopMajorPolling() {
+  if (!majorPollTimer) return
+  clearInterval(majorPollTimer)
+  majorPollTimer = null
+}
+
+async function triggerMajor() {
+  if (majorTriggering.value) return
+  majorTriggering.value = true
+  majorError.value = ''
+  try {
+    await $fetch('/api/major/trigger', { method: 'POST', body: { days: majorDays.value } })
+    await refreshMajor()
+    startMajorPolling()
+  } catch (err: unknown) {
+    const e = err as { response?: { status?: number; _data?: { error?: string } }; data?: { error?: string } }
+    if (e?.response?.status === 409) {
+      majorError.value = '已有作業執行中'
+      startMajorPolling()
+    } else {
+      majorError.value = e?.response?._data?.error ?? e?.data?.error ?? '啟動失敗，請查看後端日誌'
+    }
+  } finally {
+    majorTriggering.value = false
+  }
+}
+
+const majorBadgeText = computed(() => {
+  const s = majorStatus.value?.status
+  if (s === 'running') return '爬取中…'
+  if (s === 'completed') return '已完成'
+  if (s === 'failed') return '作業失敗'
+  return '尚未執行'
+})
+
+const majorSummaryText = computed(() => {
+  const s = majorStatus.value?.status
+  const total = majorStatus.value?.total ?? 0
+  const success = majorStatus.value?.success ?? 0
+  const fail = majorStatus.value?.fail ?? 0
+  if (s === 'running') return majorStatus.value?.message || `進行中…`
+  if (s === 'completed') return `共 ${total} 檔，成功 ${success}，失敗 ${fail}。`
+  if (s === 'failed') return majorStatus.value?.message || '作業中斷，請重新觸發。'
+  return '爬取各券商分點的主力買賣超明細，支援今日 / 近 5 / 10 / 20 日累計。'
+})
+
+const majorProcessed = computed(() =>
+  (majorStatus.value?.success ?? 0) + (majorStatus.value?.fail ?? 0)
+)
+
+const majorProgressPct = computed(() => {
+  const total = majorStatus.value?.total ?? 0
+  if (!total) return 0
+  return Math.min(100, Math.round((majorProcessed.value / total) * 100))
+})
+
+const majorCompletedAt = computed(() => {
+  if (!majorStatus.value?.completed_at) return '—'
+  return new Date(majorStatus.value.completed_at).toLocaleString('zh-TW', {
+    year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+})
+
+watch(
+  () => majorStatus.value?.status,
+  (status) => {
+    if (status === 'running') startMajorPolling()
+    else stopMajorPolling()
   },
   { immediate: true },
 )
@@ -955,6 +1051,77 @@ const settingsOpen = ref(false)
           <p v-if="priceSyncError" class="chips-err">⚠ {{ priceSyncError }}</p>
         </article>
 
+        <!-- Card 8: Major Broker (2 cols) -->
+        <article class="card card--chips">
+          <p class="card-eyebrow">Major Brokers · 主力買賣超</p>
+          <div class="chips-body">
+            <div class="chips-fresh-badge" :class="{
+              'chips-fresh-badge--ok':    majorStatus?.status === 'completed',
+              'chips-fresh-badge--stale': majorStatus?.status === 'running',
+              'chips-fresh-badge--fail':  majorStatus?.status === 'failed',
+            }">
+              <span class="pip pip--lg" :class="{
+                'pip--ok':   majorStatus?.status === 'completed',
+                'pip--busy': majorStatus?.status === 'running',
+                'pip--fail': majorStatus?.status === 'failed',
+                'pip--warn': !majorStatus || majorStatus?.status === 'never',
+              }" />
+              <span>{{ majorBadgeText }}</span>
+            </div>
+            <div class="chips-summary">
+              <p class="chips-summary__title">
+                <template v-if="majorStatus?.status === 'running'">正在爬取主力進出資料</template>
+                <template v-else-if="majorStatus?.status === 'completed'">上次主力進出爬取已完成</template>
+                <template v-else-if="majorStatus?.status === 'failed'">上次主力進出爬取失敗</template>
+                <template v-else>尚未執行主力進出爬取</template>
+              </p>
+              <p class="chips-summary__text">{{ majorSummaryText }}</p>
+            </div>
+            <div class="chips-meta">
+              <template v-if="majorStatus && majorStatus.status !== 'never'">
+                <div class="meta-row">
+                  <span class="meta-key">成功 / 總計</span>
+                  <span class="meta-val">{{ majorStatus.success ?? 0 }} / {{ majorStatus.total ?? 0 }}</span>
+                </div>
+                <div class="meta-row">
+                  <span class="meta-key">目前進度</span>
+                  <span class="meta-val">{{ majorProcessed }} / {{ majorStatus.total ?? 0 }}（{{ majorProgressPct }}%）</span>
+                </div>
+              </template>
+              <div class="meta-row">
+                <span class="meta-key">資料天期</span>
+                <span class="meta-val">{{ majorStatus?.days ? `近 ${majorStatus.days} 日` : '—' }}</span>
+              </div>
+              <div v-if="majorStatus && majorStatus.status !== 'running' && majorStatus.status !== 'never'" class="meta-row">
+                <span class="meta-key">完成時間</span>
+                <span class="meta-val">{{ majorCompletedAt }}</span>
+              </div>
+            </div>
+            <div v-if="majorStatus?.status === 'running'" class="chips-progress">
+              <div class="chips-progress__track">
+                <div class="chips-progress__fill" :style="{ width: `${majorProgressPct}%` }" />
+              </div>
+              <p class="chips-progress__text">{{ majorStatus?.message || '爬取進行中…' }}</p>
+            </div>
+          </div>
+          <div class="major-days-row">
+            <span class="meta-key">天期</span>
+            <select v-model="majorDays" class="major-days-select" :disabled="majorTriggering || majorStatus?.status === 'running'">
+              <option :value="1">今日</option>
+              <option :value="5">近 5 日</option>
+              <option :value="10">近 10 日</option>
+              <option :value="20">近 20 日</option>
+            </select>
+          </div>
+          <button
+            class="action-btn"
+            :class="{ 'action-btn--busy': majorTriggering || majorStatus?.status === 'running' }"
+            :disabled="majorTriggering || majorStatus?.status === 'running'"
+            @click="triggerMajor"
+          >{{ majorTriggering || majorStatus?.status === 'running' ? '爬取中…' : '觸發主力進出爬取' }}</button>
+          <p v-if="majorError" class="chips-err">⚠ {{ majorError }}</p>
+        </article>
+
       </div>
     </section>
 
@@ -1246,6 +1413,87 @@ const settingsOpen = ref(false)
           </div>
 
           <p v-if="priceSyncError" class="chips-err">{{ priceSyncError }}</p>
+        </article>
+
+        <!-- ── Major Broker (2 cols) ── -->
+        <article class="card card-chips">
+          <p class="eyebrow">Major Brokers · 主力買賣超</p>
+
+          <div class="chips-badge" :class="{
+            'chips-fresh-badge--ok':    majorStatus?.status === 'completed',
+            'chips-fresh-badge--stale': majorStatus?.status === 'running',
+            'chips-fresh-badge--fail':  majorStatus?.status === 'failed',
+          }">
+            <span class="pip pip-lg" :class="{
+              'pip-ok':   majorStatus?.status === 'completed',
+              'pip-busy': majorStatus?.status === 'running',
+              'pip-err':  majorStatus?.status === 'failed',
+              'pip-warn': !majorStatus || majorStatus?.status === 'never',
+            }" />
+            {{ majorBadgeText }}
+          </div>
+
+          <div class="chips-summary" :class="majorStatus?.status === 'completed' ? 'chips-summary--done' : majorStatus?.status === 'failed' ? 'chips-summary--fail' : ''">
+            <p class="cs-title">
+              <template v-if="majorStatus?.status === 'running'">正在爬取主力進出資料</template>
+              <template v-else-if="majorStatus?.status === 'completed'">上次主力進出爬取已完成</template>
+              <template v-else-if="majorStatus?.status === 'failed'">上次主力進出爬取失敗</template>
+              <template v-else>尚未執行主力進出爬取</template>
+            </p>
+            <p class="cs-text">{{ majorSummaryText }}</p>
+          </div>
+
+          <div class="chips-meta">
+            <template v-if="majorStatus && majorStatus.status !== 'never'">
+              <div class="meta-row">
+                <span class="mkey">成功 / 總計</span>
+                <span class="mval">{{ majorStatus.success ?? 0 }} / {{ majorStatus.total ?? 0 }}</span>
+              </div>
+              <div class="meta-row">
+                <span class="mkey">目前進度</span>
+                <span class="mval">{{ majorProcessed }} / {{ majorStatus.total ?? 0 }}（{{ majorProgressPct }}%）</span>
+              </div>
+            </template>
+            <div class="meta-row">
+              <span class="mkey">資料天期</span>
+              <span class="mval">{{ majorStatus?.days ? `近 ${majorStatus.days} 日` : '—' }}</span>
+            </div>
+            <div v-if="majorStatus && majorStatus.status !== 'running' && majorStatus.status !== 'never'" class="meta-row">
+              <span class="mkey">完成時間</span>
+              <span class="mval">{{ majorCompletedAt }}</span>
+            </div>
+          </div>
+
+          <div v-if="majorStatus?.status === 'running'" class="chips-progress">
+            <div class="cp-track">
+              <div class="cp-fill" :style="{ width: `${majorProgressPct}%` }" />
+            </div>
+            <p class="cp-text">{{ majorStatus?.message || '爬取進行中…' }}</p>
+          </div>
+
+          <div class="major-days-row">
+            <span class="mkey">天期</span>
+            <select v-model="majorDays" class="major-days-select" :disabled="majorTriggering || majorStatus?.status === 'running'">
+              <option :value="1">今日</option>
+              <option :value="5">近 5 日</option>
+              <option :value="10">近 10 日</option>
+              <option :value="20">近 20 日</option>
+            </select>
+          </div>
+
+          <div class="chips-actions">
+            <button
+              class="action-btn"
+              :class="{ busy: majorTriggering || majorStatus?.status === 'running' }"
+              :disabled="majorTriggering || majorStatus?.status === 'running'"
+              @click="triggerMajor"
+            >{{ majorTriggering || majorStatus?.status === 'running' ? '爬取中…' : '觸發主力進出爬取' }}</button>
+            <div v-if="majorStatus?.status === 'completed' || majorStatus?.status === 'failed'" class="sec-row">
+              <button class="sec-btn sec-retry" :disabled="majorTriggering" @click="triggerMajor">再試一次</button>
+            </div>
+          </div>
+
+          <p v-if="majorError" class="chips-err">{{ majorError }}</p>
         </article>
 
       </div>
@@ -1627,6 +1875,23 @@ const settingsOpen = ref(false)
 .card-jump     { grid-column: span 1; position: relative; }
 .card-sync     { grid-column: span 1; min-height: 200px; }
 .card-chips    { grid-column: span 2; }
+
+.major-days-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 10px;
+}
+.major-days-select {
+  background: var(--s2);
+  border: 1px solid var(--line2);
+  border-radius: 6px;
+  color: var(--t1);
+  font-size: 13px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.major-days-select:disabled { opacity: 0.5; cursor: default; }
 
 /* ─ Overview ─ */
 
