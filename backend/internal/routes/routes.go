@@ -97,6 +97,13 @@ func Setup(db *gorm.DB) *gin.Engine {
 			adminGroup.GET("/tables/:name/columns", dbViewerHandler.TableColumns)
 			adminGroup.GET("/tables/:name/data", dbViewerHandler.TableData)
 		}
+
+		settingsHandler := handlers.NewSettingsHandler(db)
+		settingsGroup := api.Group("/settings")
+		{
+			settingsGroup.GET("/features", settingsHandler.GetAll)
+			settingsGroup.PUT("/features/:id", settingsHandler.UpdateFeature)
+		}
 	}
 
 	return r

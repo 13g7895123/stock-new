@@ -31,6 +31,14 @@ PORT          = int(os.getenv("SCRAPER_PORT", "5100"))
 CONCURRENCY   = int(os.getenv("CONCURRENCY", "3"))
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "2.0"))
 HEADLESS      = os.getenv("HEADLESS", "true").lower() == "true"
+# 預設方案："http"（aiohttp，輕量）或 "playwright"（瀏覽器模擬）
+SCRAPE_METHOD = os.getenv("SCRAPE_METHOD", "http")
+
+_HTTP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "zh-TW,zh;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -240,10 +248,59 @@ def parse_page(html: str) -> tuple[Optional[date], list[dict]]:
 
     return data_date, distributions
 
-# ── Scraper ──────────────────────────────────────────────────────────────────
+# ── Scraper: 方案 B — aiohttp（輕量 HTTP，不需瀏覽器）────────────────────────
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
-async def fetch_page(context: BrowserContext, symbol: str) -> str:
+async def fetch_page_http(session: "aiohttp.ClientSession", symbol: str) -> str:
+    from aiohttp import ClientSession
+    url = f"https://norway.twsthr.info/StockHolders.aspx?stock={symbol}"
+    async with session.get(url, headers=_HTTP_HEADERS) as resp:
+        resp.raise_for_status()
+        return await resp.text(encoding="utf-8", errors="replace")
+
+async def scrape_symbol_http(session: "aiohttp.ClientSession", pool: asyncpg.Pool,
+                              job_id: int, symbol: str, sem: asyncio.Semaphore) -> bool:
+    async with sem:
+        try:
+            html = await fetch_page_http(session, symbol)
+            data_date, distributions = parse_page(html)
+            if not data_date or not distributions:
+                log.warning(f"[{symbol}] [HTTP] 無資料")
+                return False
+            await save_snapshot(pool, job_id, symbol, data_date, distributions)
+            log.info(f"[{symbol}] ✓ [HTTP] {data_date} {len(distributions)} 筆")
+            await asyncio.sleep(REQUEST_DELAY)
+            return True
+        except Exception as e:
+            log.error(f"[{symbol}] ✗ [HTTP] {e}")
+            return False
+
+async def _run_http_job(pool: asyncpg.Pool, job_id: int, symbols: list[str]):
+    import aiohttp
+    sem = asyncio.Semaphore(CONCURRENCY)
+    success = fail = 0
+    connector = aiohttp.TCPConnector(limit=CONCURRENCY + 5)
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        async def scrape_one(symbol: str) -> tuple[str, bool]:
+            return symbol, await scrape_symbol_http(session, pool, job_id, symbol, sem)
+
+        tasks = [scrape_one(s) for s in symbols]
+        for coro in asyncio.as_completed(tasks):
+            symbol, result = await coro
+            if result:
+                success += 1
+            else:
+                fail += 1
+            processed = success + fail
+            await update_job_progress(pool, job_id, success, fail,
+                                      f"處理中 {processed}/{len(symbols)}：{symbol}")
+    return success, fail
+
+# ── Scraper: 方案 C — Playwright（瀏覽器模擬）──────────────────────────────
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
+async def fetch_page_playwright(context: BrowserContext, symbol: str) -> str:
     url = f"https://norway.twsthr.info/StockHolders.aspx?stock={symbol}"
     page = await context.new_page()
     try:
@@ -253,68 +310,72 @@ async def fetch_page(context: BrowserContext, symbol: str) -> str:
     finally:
         await page.close()
 
-async def scrape_symbol(context: BrowserContext, pool: asyncpg.Pool,
-                         job_id: int, symbol: str, sem: asyncio.Semaphore) -> bool:
+async def scrape_symbol_playwright(context: BrowserContext, pool: asyncpg.Pool,
+                                    job_id: int, symbol: str, sem: asyncio.Semaphore) -> bool:
     async with sem:
         try:
-            html = await fetch_page(context, symbol)
+            html = await fetch_page_playwright(context, symbol)
             data_date, distributions = parse_page(html)
             if not data_date or not distributions:
-                log.warning(f"[{symbol}] 無資料")
+                log.warning(f"[{symbol}] [PW] 無資料")
                 return False
             await save_snapshot(pool, job_id, symbol, data_date, distributions)
-            log.info(f"[{symbol}] ✓ {data_date} {len(distributions)} 筆")
+            log.info(f"[{symbol}] ✓ [PW] {data_date} {len(distributions)} 筆")
             await asyncio.sleep(REQUEST_DELAY)
             return True
         except Exception as e:
-            log.error(f"[{symbol}] ✗ {e}")
+            log.error(f"[{symbol}] ✗ [PW] {e}")
             return False
 
-async def run_scrape_job(pool: asyncpg.Pool, symbols: list[str]):
+async def _run_playwright_job(pool: asyncpg.Pool, job_id: int, symbols: list[str]):
+    sem = asyncio.Semaphore(CONCURRENCY)
+    success = fail = 0
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=HEADLESS)
+        context = await browser.new_context(
+            locale="zh-TW",
+            extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
+        )
+        try:
+            async def scrape_one(symbol: str) -> tuple[str, bool]:
+                return symbol, await scrape_symbol_playwright(context, pool, job_id, symbol, sem)
+
+            tasks = [scrape_one(s) for s in symbols]
+            for coro in asyncio.as_completed(tasks):
+                symbol, result = await coro
+                if result:
+                    success += 1
+                else:
+                    fail += 1
+                processed = success + fail
+                await update_job_progress(pool, job_id, success, fail,
+                                          f"處理中 {processed}/{len(symbols)}：{symbol}")
+        finally:
+            await context.close()
+            await browser.close()
+    return success, fail
+
+# ── 統一入口 ─────────────────────────────────────────────────────────────────
+
+async def run_scrape_job(pool: asyncpg.Pool, symbols: list[str], method: Optional[str] = None):
+    """執行籌碼爬取作業。method: 'http'（預設） 或 'playwright'"""
     if not symbols:
         log.info("沒有要爬取的股票")
         return
 
+    effective_method = method or SCRAPE_METHOD
     job_id = await create_job(pool, len(symbols))
-    log.info(f"Job {job_id} 開始，共 {len(symbols)} 支股票")
-
-    sem = asyncio.Semaphore(CONCURRENCY)
-    success = fail = 0
+    log.info(f"Job {job_id} 開始 method={effective_method}，共 {len(symbols)} 支股票")
 
     try:
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=HEADLESS)
-            context = await browser.new_context(
-                locale="zh-TW",
-                extra_http_headers={"Accept-Language": "zh-TW,zh;q=0.9"},
-            )
-            try:
-                async def scrape_one(symbol: str) -> tuple[str, bool]:
-                    return symbol, await scrape_symbol(context, pool, job_id, symbol, sem)
-
-                tasks = [scrape_one(symbol) for symbol in symbols]
-                for task in asyncio.as_completed(tasks):
-                    symbol, result = await task
-                    if result is True:
-                        success += 1
-                    else:
-                        fail += 1
-
-                    processed = success + fail
-                    await update_job_progress(
-                        pool,
-                        job_id,
-                        success,
-                        fail,
-                        f"處理中 {processed}/{len(symbols)}：{symbol}",
-                    )
-            finally:
-                await context.close()
-                await browser.close()
+        if effective_method == "playwright":
+            success, fail = await _run_playwright_job(pool, job_id, symbols)
+        else:
+            success, fail = await _run_http_job(pool, job_id, symbols)
 
         await finish_job(pool, job_id, success, fail)
         await update_job(pool, job_id, message=f"完成：成功 {success}，失敗 {fail}")
-        log.info(f"Job {job_id} 完成 success={success} fail={fail}")
+        log.info(f"Job {job_id} 完成 method={effective_method} success={success} fail={fail}")
     except Exception as e:
         msg = f"job failed: {e}"
         log.error(msg)
@@ -347,6 +408,7 @@ async def handle_trigger(request: web.Request) -> web.Response:
         pass
 
     symbol = body.get("symbol")
+    method = body.get("method", SCRAPE_METHOD)  # "http" | "playwright"
     if symbol:
         symbols = [symbol]
     else:
@@ -355,8 +417,8 @@ async def handle_trigger(request: web.Request) -> web.Response:
     if not symbols:
         return web.json_response({"ok": False, "msg": "沒有股票需要爬取（請先同步股票清單）"}, status=400)
 
-    _running_task = asyncio.create_task(run_scrape_job(pool, symbols))
-    return web.json_response({"ok": True, "total": len(symbols)})
+    _running_task = asyncio.create_task(run_scrape_job(pool, symbols, method))
+    return web.json_response({"ok": True, "total": len(symbols), "method": method})
 
 async def handle_status(request: web.Request) -> web.Response:
     pool = await get_db_pool()

@@ -1,8 +1,13 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -15,8 +20,9 @@ import (
 )
 
 type ChipsHandler struct {
-	db     *gorm.DB
-	runner *chipsrunner.Runner
+	db         *gorm.DB
+	runner     *chipsrunner.Runner
+	scraperURL string // Python scraper 服務 URL
 }
 
 var (
@@ -35,7 +41,71 @@ func getChipsRunner(db *gorm.DB) *chipsrunner.Runner {
 }
 
 func NewChipsHandler(db *gorm.DB) *ChipsHandler {
-	return &ChipsHandler{db: db, runner: getChipsRunner(db)}
+	return &ChipsHandler{
+		db:         db,
+		runner:     getChipsRunner(db),
+		scraperURL: os.Getenv("SCRAPER_URL"),
+	}
+}
+
+// ─── 方案派送 ─────────────────────────────────────────────────────────────────
+
+// callPythonScraper 呼叫 Python scraper 服務
+func (h *ChipsHandler) callPythonScraper(method string, symbol string) error {
+	if h.scraperURL == "" {
+		return fmt.Errorf("SCRAPER_URL 未設定，無法呼叫 Python scraper 服務")
+	}
+	body := map[string]string{"method": method}
+	if symbol != "" {
+		body["symbol"] = symbol
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req, err := http.NewRequest(http.MethodPost, h.scraperURL+"/trigger", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("python scraper 無法連線: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return chipsrunner.ErrJobRunning
+	}
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("python scraper 回傳 %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
+// triggerByScheme 依方案觸發爬取
+func (h *ChipsHandler) triggerByScheme(scheme string, symbol string) (int, error) {
+	switch scheme {
+	case "python_http":
+		return 0, h.callPythonScraper("http", symbol)
+	case "python_playwright":
+		return 0, h.callPythonScraper("playwright", symbol)
+	default: // go_http
+		return h.runner.Trigger(symbol)
+	}
+}
+
+// dispatchTrigger 讀取設定完成方案派送，失敗時自動啟用備案
+func (h *ChipsHandler) dispatchTrigger(symbol string) (scheme string, total int, err error) {
+	cfg := GetFeatureConfig(h.db, "chips_pyramid")
+	scheme = cfg.Primary
+	total, err = h.triggerByScheme(scheme, symbol)
+	if err != nil && err != chipsrunner.ErrJobRunning && err != chipsrunner.ErrNoSymbols {
+		if cfg.FallbackEnabled && cfg.Fallback != "" && cfg.Fallback != scheme {
+			log.Printf("[chips] 主方案 %s 失敗（%v），嘗試備案 %s", scheme, err, cfg.Fallback)
+			scheme = cfg.Fallback
+			total, err = h.triggerByScheme(scheme, symbol)
+		}
+	}
+	return
 }
 
 // Status GET /api/chips/status
@@ -71,9 +141,9 @@ func (h *ChipsHandler) Status(c *gin.Context) {
 }
 
 // Trigger POST /api/chips/trigger
-// 手動觸發一次爬取（由 Go backend 背景執行）
+// 手動觸發一次爬取（依設定選擇方案）
 func (h *ChipsHandler) Trigger(c *gin.Context) {
-	total, err := h.runner.Trigger("")
+	scheme, total, err := h.dispatchTrigger("")
 	if err != nil {
 		if err == chipsrunner.ErrJobRunning {
 			c.JSON(http.StatusConflict, gin.H{"error": "scraper already running"})
@@ -86,8 +156,7 @@ func (h *ChipsHandler) Trigger(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{"ok": true, "total": total})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "total": total, "scheme": scheme})
 }
 
 // TriggerSingle POST /api/chips/trigger-single
@@ -107,7 +176,7 @@ func (h *ChipsHandler) TriggerSingle(c *gin.Context) {
 		return
 	}
 
-	total, err := h.runner.Trigger(symbol)
+	scheme, total, err := h.dispatchTrigger(symbol)
 	if err != nil {
 		if err == chipsrunner.ErrJobRunning {
 			c.JSON(http.StatusConflict, gin.H{"error": "已有爬取任務執行中"})
@@ -116,7 +185,7 @@ func (h *ChipsHandler) TriggerSingle(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "symbol": symbol, "total": total})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "symbol": symbol, "total": total, "scheme": scheme})
 }
 
 // TriggerCron 由後端 cron goroutine 呼叫（不走 HTTP）
