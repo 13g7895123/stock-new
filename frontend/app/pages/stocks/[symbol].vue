@@ -45,6 +45,31 @@ const { data: prices, refresh: refreshPrices } = await useFetch<DailyPrice[]>(
   () => `/api/stocks/${symbol}/prices?from=${from.value}&to=${to.value}&limit=2000`,
 )
 
+// ── 主力買賣超 ─────────────────────────────
+interface MajorBrokerRecord {
+  id: number
+  broker_name: string
+  buy_vol: number
+  sell_vol: number
+  net_vol: number
+  pct: number
+  rank: number
+  side: string
+}
+
+interface MajorData {
+  symbol: string
+  days: number
+  data_date: string | null
+  buy: MajorBrokerRecord[]
+  sell: MajorBrokerRecord[]
+}
+
+const majorDays = ref(1)
+const { data: majorData } = await useFetch<MajorData>(
+  () => `/api/major/${symbol}?days=${majorDays.value}`,
+)
+
 // ── 主題 + 風格 ─────────────────────────────────────────────────────────
 const { isDark, appStyle, isBento, isClassic, toggleTheme, setTheme, setStyle } = useAppPrefs()
 const settingsOpen = ref(false)
@@ -819,6 +844,84 @@ function startRefresh() {
         </table>
       </div>
 
+      <!-- ══ 主力買賣超 ══ -->
+      <div class="major-panel">
+        <div class="major-topbar">
+          <div class="major-topbar-left">
+            <h2 class="table-heading">主力買賣超</h2>
+            <span v-if="majorData?.data_date" class="table-count">資料日期：{{ majorData.data_date }}</span>
+            <span v-else class="table-count">尚無資料</span>
+          </div>
+          <div class="range-group">
+            <button
+              v-for="d in [1, 5, 10, 20, 60]"
+              :key="d"
+              class="range-btn"
+              :class="{ 'range-btn--active': majorDays === d }"
+              @click="majorDays = d"
+            >{{ d }}日</button>
+          </div>
+        </div>
+
+        <div v-if="!majorData?.data_date" class="chart-empty">
+          尚無主力資料，請先在首頁觸發「主力進出爬取」。
+        </div>
+        <div v-else class="major-body">
+          <!-- 買超 -->
+          <div class="major-side">
+            <div class="major-side-header buy-header">買超前 10 名</div>
+            <table class="major-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>券商</th>
+                  <th class="ra">買進（張）</th>
+                  <th class="ra">賣出（張）</th>
+                  <th class="ra">買賣超（張）</th>
+                  <th class="ra">佔比</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in majorData.buy" :key="r.id">
+                  <td class="td-rank td-muted">{{ r.rank }}</td>
+                  <td class="td-broker">{{ r.broker_name }}</td>
+                  <td class="ra">{{ r.buy_vol.toLocaleString() }}</td>
+                  <td class="ra td-muted">{{ r.sell_vol.toLocaleString() }}</td>
+                  <td class="ra td-high">+{{ r.net_vol.toLocaleString() }}</td>
+                  <td class="ra td-muted">{{ r.pct.toFixed(2) }}%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <!-- 賣超 -->
+          <div class="major-side">
+            <div class="major-side-header sell-header">賣超前 10 名</div>
+            <table class="major-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>券商</th>
+                  <th class="ra">買進（張）</th>
+                  <th class="ra">賣出（張）</th>
+                  <th class="ra">買賣超（張）</th>
+                  <th class="ra">佔比</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in majorData.sell" :key="r.id">
+                  <td class="td-rank td-muted">{{ r.rank }}</td>
+                  <td class="td-broker">{{ r.broker_name }}</td>
+                  <td class="ra td-muted">{{ r.buy_vol.toLocaleString() }}</td>
+                  <td class="ra">{{ r.sell_vol.toLocaleString() }}</td>
+                  <td class="ra td-low">{{ r.net_vol.toLocaleString() }}</td>
+                  <td class="ra td-muted">{{ r.pct.toFixed(2) }}%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </template>
@@ -1526,4 +1629,86 @@ function startRefresh() {
   transition: border-color 0.15s, color 0.15s;
 }
 .classic-toggle-btn:hover { border-color: var(--gold); color: var(--gold); }
+
+/* ── Major Panel ──────────────────────────── */
+.major-panel {
+  border: 1px solid var(--line);
+  background: var(--s2);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 20px;
+}
+
+.major-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 20px 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.major-topbar-left {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.major-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.major-side { overflow-x: auto; }
+.major-side:first-child { border-right: 1px solid var(--line); }
+
+.major-side-header {
+  padding: 9px 20px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--line);
+}
+.buy-header  { color: var(--up); }
+.sell-header { color: var(--dn); }
+
+.major-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.major-table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--t3);
+  padding: 9px 14px 8px 0;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.major-table th:first-child { padding-left: 20px; }
+.major-table th.ra { text-align: right; }
+
+.major-table td {
+  padding: 9px 14px 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+  color: var(--t1);
+}
+.major-table td:first-child { padding-left: 20px; }
+.major-table tr:last-child td { border-bottom: none; }
+.major-table tbody tr:hover td { background: var(--s1); }
+
+.td-rank   { font-family: var(--mono); font-size: 12px; width: 28px; }
+.td-broker { font-size: 13px; }
+
+@media (max-width: 860px) {
+  .major-body { grid-template-columns: 1fr; }
+  .major-side:first-child { border-right: none; border-bottom: 1px solid var(--line); }
+}
 </style>
