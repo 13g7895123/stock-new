@@ -242,36 +242,59 @@ func (r *Runner) scrapeSymbol(jobID uint, symbol string) (bool, error) {
 }
 
 func (r *Runner) fetchPage(symbol string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, "https://norway.twsthr.info/StockHolders.aspx?stock="+symbol, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7")
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Pragma", "no-cache")
-	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	const maxRetries = 3
+	delays := []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second}
 
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(delays[attempt-1])
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected status: %d", resp.StatusCode)
-	}
+		req, err := http.NewRequest(http.MethodGet, "https://norway.twsthr.info/StockHolders.aspx?stock="+symbol, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+		req.Header.Set("Accept-Language", "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7")
+		req.Header.Set("Referer", "https://norway.twsthr.info/")
+		req.Header.Set("Cache-Control", "no-cache")
+		req.Header.Set("Pragma", "no-cache")
+		req.Header.Set("Upgrade-Insecure-Requests", "1")
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return "", err
+		resp, err := r.client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			doc, err := goquery.NewDocumentFromReader(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				return "", err
+			}
+			html, err := doc.Html()
+			if err != nil {
+				return "", err
+			}
+			return html, nil
+		}
+
+		status := resp.StatusCode
+		resp.Body.Close()
+
+		// 403/429/503 可能是暫時限速，重試
+		if status == http.StatusForbidden || status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
+			lastErr = fmt.Errorf("unexpected status: %d", status)
+			log.Printf("[chips][%s] HTTP %d，第 %d 次重試", symbol, status, attempt+1)
+			continue
+		}
+
+		return "", fmt.Errorf("unexpected status: %d", status)
 	}
-	html, err := doc.Html()
-	if err != nil {
-		return "", err
-	}
-	return html, nil
+	return "", lastErr
 }
 
 func parseLatestSnapshot(html string) (time.Time, []models.ChipsHolderDistribution, error) {
