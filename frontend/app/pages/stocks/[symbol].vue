@@ -508,11 +508,11 @@ interface BrokerWinrate {
   broker_name: string
   total_trades: number
   win_trades: number
-  win_rate_pct: number
-  avg_return_pct: number
-  avg_holding_days: number
-  max_return_pct: number
-  last_entry_date: string
+  win_rate_pct: number | null
+  avg_return_pct: number | null
+  avg_holding_days: number | null
+  max_return_pct: number | null
+  last_entry_date: string | null
 }
 interface BrokerTradeEvent {
   id: number
@@ -565,7 +565,8 @@ async function triggerWinrate() {
   }
 }
 
-function winrateClass(pct: number): string {
+function winrateClass(pct: number | null): string {
+  if (pct === null) return ''
   if (pct >= 60) return 'wr-high'
   if (pct >= 40) return 'wr-mid'
   return 'wr-low'
@@ -1025,14 +1026,14 @@ function startRefresh() {
           >
             <div class="wr-summary" @click="toggleWinrateBroker(row.broker_name)">
               <div class="wr-broker">{{ row.broker_name }}</div>
-              <div class="wr-badge" :class="winrateClass(row.win_rate_pct)">
-                {{ row.win_rate_pct.toFixed(1) }}%
+              <div class="wr-badge" :class="winrateClass(row.win_rate_pct ?? 0)">
+                {{ row.win_rate_pct != null ? row.win_rate_pct.toFixed(1) + '%' : '—' }}
               </div>
               <div class="wr-meta">
                 <span>交易 {{ row.total_trades }} 次</span>
-                <span>平均 <span :class="returnColorClass(row.avg_return_pct)">{{ (row.avg_return_pct > 0 ? '+' : '') + row.avg_return_pct.toFixed(2) }}%</span></span>
-                <span>持倉 {{ row.avg_holding_days.toFixed(0) }} 日</span>
-                <span class="td-muted">最近 {{ row.last_entry_date?.slice(0, 10) }}</span>
+                <span>平均 <span :class="returnColorClass(row.avg_return_pct)">{{ row.avg_return_pct != null ? (row.avg_return_pct > 0 ? '+' : '') + row.avg_return_pct.toFixed(2) + '%' : '—' }}</span></span>
+                <span>持倉 {{ row.avg_holding_days != null ? row.avg_holding_days.toFixed(0) + ' 日' : '—' }}</span>
+                <span class="td-muted">最近 {{ row.last_entry_date?.slice(0, 10) ?? '—' }}</span>
               </div>
               <div class="wr-expand-icon">{{ expandedWinrateBroker === row.broker_name ? '▲' : '▼' }}</div>
             </div>
