@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"sync"
 
-	winraterunner "stock-backend/internal/winrate"
 	"stock-backend/internal/models"
+	winraterunner "stock-backend/internal/winrate"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -137,7 +137,7 @@ func (h *WinrateHandler) GetWinrateBySymbol(c *gin.Context) {
 // GetEventsByBroker  GET /api/stocks/:symbol/broker-winrate/events?broker=元大-中山
 // 回傳指定股票＋券商的所有歷史交易事件（建倉→出場明細）
 func (h *WinrateHandler) GetEventsByBroker(c *gin.Context) {
-	symbol     := c.Param("symbol")
+	symbol := c.Param("symbol")
 	brokerName := c.Query("broker")
 	if brokerName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "broker query param is required"})
