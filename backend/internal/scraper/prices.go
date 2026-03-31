@@ -313,9 +313,12 @@ func FetchTPEXDayAll(date time.Time) ([]models.DailyPrice, error) {
 // 共用解析工具
 // ─────────────────────────────────────────────
 
-// cleanNumber 移除千分位逗號及空白
+// cleanNumber 移除千分位逗號（ASCII 及全形）與前後空白
 func cleanNumber(s string) string {
-	return strings.ReplaceAll(strings.TrimSpace(s), ",", "")
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, ",", "")  // ASCII 千分位逗號
+	s = strings.ReplaceAll(s, "，", "") // 全形千分位逗號（部分來源）
+	return s
 }
 
 // parsePrice 解析含逗號的價格字串，遇到 "--" / "除權" 等非數字回傳 0
@@ -327,13 +330,20 @@ func parsePrice(s string) (float64, error) {
 	return strconv.ParseFloat(clean, 64)
 }
 
-// parseVolume 解析含逗號的整數量（成交量、成交金額）
+// parseVolume 解析含千分位逗號的整數量（成交量、成交金額）
+// 優先以 ParseInt 解析；若帶小數點（如 "1234567.00"）則 fallback 至 ParseFloat 再截斷
 func parseVolume(s string) (int64, error) {
 	clean := cleanNumber(s)
 	if clean == "--" || clean == "" {
 		return 0, nil
 	}
-	return strconv.ParseInt(clean, 10, 64)
+	if v, err := strconv.ParseInt(clean, 10, 64); err == nil {
+		return v, nil
+	}
+	if f, err := strconv.ParseFloat(clean, 64); err == nil {
+		return int64(f), nil
+	}
+	return 0, fmt.Errorf("parseVolume: cannot parse %q", s)
 }
 
 // parseROCDate 將民國日期（"113/01/02"）轉換為 time.Time

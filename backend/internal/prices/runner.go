@@ -110,8 +110,41 @@ func (r *Runner) loadStocks() ([]stockInfo, error) {
 	return out, nil
 }
 
+// loadLatestDates 一次性查詢所有股票目前最新日期，供 worker 決定回填範圍
+func (r *Runner) loadLatestDates(symbols []string) (map[string]time.Time, error) {
+	var rows []struct {
+		Symbol  string
+		MaxDate time.Time
+	}
+	if err := r.db.Model(&models.DailyPrice{}).
+		Select("symbol, MAX(date) as max_date").
+		Where("symbol IN ?", symbols).
+		Group("symbol").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	cache := make(map[string]time.Time, len(rows))
+	for _, row := range rows {
+		cache[row.Symbol] = row.MaxDate
+	}
+	return cache, nil
+}
+
 func (r *Runner) runJob(stocks []stockInfo) {
 	defer r.setRunning(false)
+
+	// 第一步：預先查詢所有股票有記錄的最新日期，預建快取，决定各股股票實際需要回填的月份
+	symbols := make([]string, len(stocks))
+	for i, s := range stocks {
+		symbols[i] = s.Symbol
+	}
+	latestDates, err := r.loadLatestDates(symbols)
+	if err != nil {
+		log.Printf("[price-sync] loadLatestDates failed: %v (fallback to full history)", err)
+		latestDates = make(map[string]time.Time)
+	}
+	log.Printf("[price-sync] 快取載入完成：%d 支股票已有資料，%d 支需全量回填",
+		len(latestDates), len(stocks)-len(latestDates))
 
 	job := models.PriceSyncJob{
 		StartedAt: time.Now(),
@@ -134,7 +167,7 @@ func (r *Runner) runJob(stocks []stockInfo) {
 		workerCount = len(stocks)
 	}
 	for i := 0; i < workerCount; i++ {
-		go r.worker(jobs, results)
+		go r.worker(jobs, results, latestDates)
 	}
 
 	go func() {
@@ -190,9 +223,10 @@ func (r *Runner) runJob(stocks []stockInfo) {
 	log.Printf("[price-sync] job %d finished status=%s success=%d fail=%d", job.ID, status, success, fail)
 }
 
-func (r *Runner) worker(jobs <-chan stockInfo, results chan<- fetchResult) {
+func (r *Runner) worker(jobs <-chan stockInfo, results chan<- fetchResult, latestDates map[string]time.Time) {
 	for s := range jobs {
-		n, err := r.fetchAllHistory(s)
+		latestDate := latestDates[s.Symbol] // 若不在快取中，回傳零值（全量回填）
+		n, err := r.fetchAllHistory(s, latestDate)
 		results <- fetchResult{symbol: s.Symbol, records: n, err: err}
 		// 每支股票之間稍作間隔，避免對交易所 API rate limit
 		time.Sleep(200 * time.Millisecond)
@@ -200,7 +234,8 @@ func (r *Runner) worker(jobs <-chan stockInfo, results chan<- fetchResult) {
 }
 
 // fetchAllHistory 先嘗試券商 API（一次取全部歷史），失敗才回退到 TWSE/TPEX 月份迴圈
-func (r *Runner) fetchAllHistory(s stockInfo) (int, error) {
+// latestDate 非零值時，逐月模式只補抓該月份之後的資料
+func (r *Runner) fetchAllHistory(s stockInfo, latestDate time.Time) (int, error) {
 	// ── 方案一：券商 API（一次請求取全部） ──────────────────────
 	brokerResult, brokerErr := scraper.FetchBrokerStockHistory(s.Symbol)
 	if brokerErr == nil && len(brokerResult.Records) > 30 {
@@ -214,11 +249,12 @@ func (r *Runner) fetchAllHistory(s stockInfo) (int, error) {
 	}
 
 	// ── 方案二：TWSE/TPEX 逐月迴圈 ─────────────────────────────
-	return r.fetchAllHistoryByMonth(s)
+	return r.fetchAllHistoryByMonth(s, latestDate)
 }
 
 // fetchAllHistoryByMonth 從當月往回逐月抓，連續 3 個月無資料即停止
-func (r *Runner) fetchAllHistoryByMonth(s stockInfo) (int, error) {
+// latestDate 非零值時，只補抓從 latestDate 所在月份（前 2 個月緩衝）至今
+func (r *Runner) fetchAllHistoryByMonth(s stockInfo, latestDate time.Time) (int, error) {
 	now := time.Now().In(time.FixedZone("CST", 8*3600))
 	var all []models.DailyPrice
 	emptyStreak := 0
@@ -226,6 +262,15 @@ func (r *Runner) fetchAllHistoryByMonth(s stockInfo) (int, error) {
 
 	for i := 0; ; i++ {
 		t := now.AddDate(0, -i, 0)
+
+		// 若有最新日期，且已超出起始月份，停止
+		if !latestDate.IsZero() {
+			if t.Year() < latestDate.Year() ||
+				(t.Year() == latestDate.Year() && t.Month() < latestDate.Month()) {
+				break
+			}
+		}
+
 		ym := fmt.Sprintf("%d%02d", t.Year(), t.Month())
 
 		var records []models.DailyPrice
@@ -257,13 +302,25 @@ func (r *Runner) fetchAllHistoryByMonth(s stockInfo) (int, error) {
 }
 
 // saveRecords UPSERT 一組 DailyPrice 至資料庫
+// ON CONFLICT：更新 OHLCV，但若現有 tx_value 已有數值則保留，不覆蓋
 func (r *Runner) saveRecords(all []models.DailyPrice) (int, error) {
 	if len(all) == 0 {
 		return 0, nil
 	}
 	result := r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "symbol"}, {Name: "date"}},
-		DoUpdates: clause.AssignmentColumns([]string{"open", "high", "low", "close", "volume", "tx_value", "tx_count"}),
+		Columns: []clause.Column{{Name: "symbol"}, {Name: "date"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"open":   gorm.Expr("EXCLUDED.open"),
+			"high":   gorm.Expr("EXCLUDED.high"),
+			"low":    gorm.Expr("EXCLUDED.low"),
+			"close":  gorm.Expr("EXCLUDED.close"),
+			"volume": gorm.Expr("EXCLUDED.volume"),
+			"tx_value": gorm.Expr(
+				"CASE WHEN daily_prices.tx_value IS NOT NULL AND daily_prices.tx_value <> 0 " +
+					"THEN daily_prices.tx_value ELSE EXCLUDED.tx_value END",
+			),
+			"tx_count": gorm.Expr("EXCLUDED.tx_count"),
+		}),
 	}).CreateInBatches(&all, 500)
 
 	if result.Error != nil {
@@ -272,10 +329,9 @@ func (r *Runner) saveRecords(all []models.DailyPrice) (int, error) {
 	return len(all), nil
 }
 
-// FetchSingle 同步爬取單支股票的全部歷史日K，用於測試或手動補抓
-// useBroker=true 只用券商 API；false 只用 TWSE/TPEX 月份迴圈；nil/未傳使用自動（先券商再 fallback）
+// FetchSingle 同步爬取單支股票的全部歷史日K，用於測試或手動補抓（先券商 API，失敗再 TWSE/TPEX 月份迴圈）
 func (r *Runner) FetchSingle(symbol, market string) (int, error) {
-	return r.fetchAllHistory(stockInfo{Symbol: symbol, Market: market})
+	return r.fetchAllHistory(stockInfo{Symbol: symbol, Market: market}, time.Time{})
 }
 
 // FetchSingleBrokerOnly 只透過券商 API 抓取（不走 TWSE/TPEX 月份迴圈）
