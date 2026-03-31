@@ -38,6 +38,8 @@ func Setup(db *gorm.DB) *gin.Engine {
 	priceSyncHandler := handlers.NewPriceSyncHandler(db)
 	debugHandler := handlers.NewDebugHandler(db)
 	majorHandler := handlers.NewMajorHandler(db)
+	groupHandler := handlers.NewGroupHandler(db)
+	winrateHandler := handlers.NewWinrateHandler(db)
 
 	api := r.Group("/api")
 	{
@@ -53,6 +55,11 @@ func Setup(db *gorm.DB) *gin.Engine {
 			stocks.GET("/:symbol/prices/latest", priceHandler.Latest)
 			// Tags 指派
 			stocks.PUT("/:symbol/tags", tagHandler.SetStockTags)
+			// Groups 指派
+			stocks.PUT("/:symbol/groups", groupHandler.SetStockGroups)
+			// 券商勝率
+			stocks.GET("/:symbol/broker-winrate", winrateHandler.GetWinrateBySymbol)
+			stocks.GET("/:symbol/broker-winrate/events", winrateHandler.GetEventsByBroker)
 		}
 
 		// 產業列表
@@ -65,6 +72,23 @@ func Setup(db *gorm.DB) *gin.Engine {
 			tags.POST("", tagHandler.Create)
 			tags.PUT("/:id", tagHandler.Update)
 			tags.DELETE("/:id", tagHandler.Delete)
+		}
+
+		// Groups CRUD
+		groupsRoute := api.Group("/groups")
+		{
+			groupsRoute.GET("", groupHandler.List)
+			groupsRoute.POST("", groupHandler.Create)
+			groupsRoute.PUT("/:id", groupHandler.Update)
+			groupsRoute.DELETE("/:id", groupHandler.Delete)
+		}
+
+		// 券商勝率
+		winrateRoute := api.Group("/winrate")
+		{
+			winrateRoute.GET("/status", winrateHandler.Status)
+			winrateRoute.POST("/trigger", winrateHandler.Trigger)
+			winrateRoute.POST("/trigger-single", winrateHandler.TriggerSingle)
 		}
 
 		scraperGroup := api.Group("/scraper")

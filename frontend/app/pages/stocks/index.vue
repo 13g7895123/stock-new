@@ -204,6 +204,60 @@
           <p v-if="tagError" class="tag-err">{{ tagError }}</p>
         </section>
 
+        <!-- Group Filter + Management -->
+        <section class="filter-section">
+          <div class="filter-heading">
+            <span>群組</span>
+            <button v-if="selectedGroupId" class="clear-btn" @click="selectedGroupId = 0">清除</button>
+          </div>
+          <div v-if="groupsLoading" class="filter-loading">載入中…</div>
+          <ul v-else class="filter-list">
+            <li>
+              <button
+                class="filter-item"
+                :class="{ active: selectedGroupId === 0 }"
+                @click="selectedGroupId = 0"
+              >
+                全部群組
+              </button>
+            </li>
+            <li v-for="g in groups" :key="g.id" class="tag-row">
+              <button
+                class="filter-item tag-item"
+                :class="{ active: selectedGroupId === g.id }"
+                @click="selectedGroupId = g.id"
+              >
+                <span class="tag-dot" :style="{ background: g.color }"></span>
+                {{ g.name }}
+              </button>
+              <button class="tag-del-btn" title="刪除群組" @click.stop="deleteGroup(g.id)">×</button>
+            </li>
+          </ul>
+
+          <!-- Create Group -->
+          <form class="tag-create group-create" @submit.prevent="createGroup">
+            <div class="group-create-row">
+              <input
+                v-model="newGroupName"
+                class="tag-name-input"
+                type="text"
+                placeholder="群組名稱…"
+                maxlength="40"
+              />
+              <input v-model="newGroupColor" class="tag-color-input" type="color" title="選擇顏色" />
+              <button type="submit" class="tag-add-btn" :disabled="!newGroupName.trim()">+</button>
+            </div>
+            <textarea
+              v-model="newGroupDesc"
+              class="group-desc-input"
+              placeholder="群組說明（選填）"
+              rows="2"
+              maxlength="200"
+            ></textarea>
+          </form>
+          <p v-if="groupError" class="tag-err">{{ groupError }}</p>
+        </section>
+
       </aside>
 
       <!-- Main Table -->
@@ -224,6 +278,7 @@
               <th class="ra">漲跌幅</th>
               <th class="ra">成交量</th>
               <th>標籤</th>
+              <th>群組</th>
               <th class="ca">K 線</th>
             </tr>
           </thead>
@@ -278,6 +333,39 @@
                   <p v-if="tags.length === 0" class="tag-popover-empty">尚無標籤</p>
                 </div>
               </td>
+              <td class="td-tags td-groups">
+                <div class="tags-cell">
+                  <span
+                    v-for="g in (stock.groups ?? [])"
+                    :key="g.id"
+                    class="tag-chip"
+                    :style="{ borderColor: g.color, color: g.color }"
+                  >{{ g.name }}</span>
+                  <button
+                    class="tag-assign-btn"
+                    title="管理群組"
+                    @click="toggleGroupRow(stock.symbol)"
+                  >＋</button>
+                </div>
+                <!-- Group Assign Popover -->
+                <div v-if="expandedGroupRow === stock.symbol" class="tag-popover">
+                  <p class="tag-popover-head">選擇群組</p>
+                  <label
+                    v-for="g in groups"
+                    :key="g.id"
+                    class="tag-popover-item"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="stockHasGroup(stock, g.id)"
+                      @change="toggleStockGroup(stock, g.id)"
+                    />
+                    <span class="tag-dot" :style="{ background: g.color }"></span>
+                    {{ g.name }}
+                  </label>
+                  <p v-if="groups.length === 0" class="tag-popover-empty">尚無群組</p>
+                </div>
+              </td>
               <td class="ca">
                 <NuxtLink :to="`/stocks/${stock.symbol}`" class="row-link">K 線</NuxtLink>
               </td>
@@ -295,9 +383,18 @@
 </template>
 
 <script setup lang="ts">
+import { useAppPrefs } from '~/composables/useAppPrefs'
+
 interface Tag {
   id: number
   name: string
+  color: string
+}
+
+interface StockGroup {
+  id: number
+  name: string
+  description: string
   color: string
 }
 
@@ -313,6 +410,7 @@ interface Stock {
   volume: number
   updated_at: string
   tags: Tag[]
+  groups: StockGroup[]
 }
 
 // ── Theme + Style ───────────────────────────────────────────────
@@ -325,9 +423,10 @@ const today = new Date().toLocaleDateString('zh-TW', {
 })
 
 // ── Filters ────────────────────────────────────────────────────
-const searchQuery    = ref('')
+const searchQuery      = ref('')
 const selectedIndustry = ref('')
-const selectedTagId  = ref(0)
+const selectedTagId    = ref(0)
+const selectedGroupId  = ref(0)
 
 // ── Industry Code → 中文對照 ───────────────────────────
 const industryMap: Record<string, string> = {
@@ -406,6 +505,54 @@ async function deleteTag(id: number) {
   }
 }
 
+// ── Groups ───────────────────────────────────────────────
+const groups        = ref<StockGroup[]>([])
+const groupsLoading = ref(true)
+const groupError    = ref('')
+const newGroupName  = ref('')
+const newGroupDesc  = ref('')
+const newGroupColor = ref('#3b82f6')
+
+async function fetchGroups() {
+  try {
+    const res = await $fetch<StockGroup[]>('/api/groups')
+    groups.value = Array.isArray(res) ? res : []
+  } catch {
+    groups.value = []
+  } finally {
+    groupsLoading.value = false
+  }
+}
+
+async function createGroup() {
+  const name = newGroupName.value.trim()
+  if (!name) return
+  groupError.value = ''
+  try {
+    await $fetch('/api/groups', {
+      method: 'POST',
+      body: { name, description: newGroupDesc.value.trim(), color: newGroupColor.value }
+    })
+    newGroupName.value = ''
+    newGroupDesc.value = ''
+    newGroupColor.value = '#3b82f6'
+    await fetchGroups()
+  } catch {
+    groupError.value = '建立群組失敗'
+  }
+}
+
+async function deleteGroup(id: number) {
+  groupError.value = ''
+  try {
+    await $fetch(`/api/groups/${id}`, { method: 'DELETE' })
+    if (selectedGroupId.value === id) selectedGroupId.value = 0
+    await Promise.all([fetchGroups(), fetchStocks()])
+  } catch {
+    groupError.value = '刪除失敗'
+  }
+}
+
 // ── Stocks ─────────────────────────────────────────────────────
 const stocks       = ref<Stock[]>([])
 const tableLoading = ref(true)
@@ -416,6 +563,7 @@ async function fetchStocks() {
     const params: Record<string, string> = {}
     if (selectedIndustry.value) params.industry  = selectedIndustry.value
     if (selectedTagId.value)    params.tag_id    = String(selectedTagId.value)
+    if (selectedGroupId.value)  params.group_id  = String(selectedGroupId.value)
     const res = await $fetch<Stock[]>('/api/stocks', { query: params })
     stocks.value = Array.isArray(res) ? res : []
   } catch {
@@ -436,7 +584,7 @@ const filteredStocks = computed(() => {
 })
 
 // Re-fetch when server-side filters change
-watch([selectedIndustry, selectedTagId], () => fetchStocks())
+watch([selectedIndustry, selectedTagId, selectedGroupId], () => fetchStocks())
 
 // ── Tag Assignment ─────────────────────────────────────────────
 const expandedTagRow = ref('')
@@ -471,6 +619,38 @@ async function toggleStockTag(stock: Stock, tagId: number) {
   }
 }
 
+// ── Group Assignment ───────────────────────────────────────────
+const expandedGroupRow = ref('')
+
+function toggleGroupRow(symbol: string) {
+  expandedGroupRow.value = expandedGroupRow.value === symbol ? '' : symbol
+}
+
+function stockHasGroup(stock: Stock, groupId: number): boolean {
+  return (stock.groups ?? []).some(g => g.id === groupId)
+}
+
+async function toggleStockGroup(stock: Stock, groupId: number) {
+  const current = (stock.groups ?? []).map(g => g.id)
+  const next = stockHasGroup(stock, groupId)
+    ? current.filter(id => id !== groupId)
+    : [...current, groupId]
+  try {
+    await $fetch(`/api/stocks/${stock.symbol}/groups`, {
+      method: 'PUT',
+      body: { group_ids: next }
+    })
+    const group = groups.value.find(g => g.id === groupId)
+    if (stockHasGroup(stock, groupId)) {
+      stock.groups = (stock.groups ?? []).filter(g => g.id !== groupId)
+    } else if (group) {
+      stock.groups = [...(stock.groups ?? []), group]
+    }
+  } catch {
+    groupError.value = '更新群組失敗'
+  }
+}
+
 // ── Color helpers ──────────────────────────────────────────────
 function colorClass(val: number) {
   if (val > 0) return 'col-up'
@@ -480,7 +660,7 @@ function colorClass(val: number) {
 
 // ── Init ───────────────────────────────────────────────────────
 onMounted(async () => {
-  await Promise.all([fetchIndustries(), fetchTags(), fetchStocks()])
+  await Promise.all([fetchIndustries(), fetchTags(), fetchGroups(), fetchStocks()])
 })
 </script>
 
@@ -1019,6 +1199,28 @@ onMounted(async () => {
   transition: border-color 0.15s, color 0.15s;
 }
 .row-link:hover { border-color: var(--gold); color: var(--gold); }
+
+/* Groups */
+.td-groups { position: relative; min-width: 110px; }
+.group-create { flex-direction: column; gap: 6px; }
+.group-create-row { display: flex; align-items: center; gap: 6px; }
+.group-desc-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--s3);
+  border: 1px solid var(--line2);
+  border-radius: 7px;
+  color: var(--t1);
+  font-family: var(--font);
+  font-size: 12.5px;
+  padding: 6px 9px;
+  resize: vertical;
+  min-height: 46px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.group-desc-input:focus { border-color: var(--gold); }
+.group-desc-input::placeholder { color: var(--t3); }
 
 .table-empty {
   padding: 60px 0;

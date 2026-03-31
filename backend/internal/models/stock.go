@@ -16,10 +16,23 @@ type Stock struct {
 	Change    float64        `json:"change"`
 	ChangePct float64        `json:"change_pct"`
 	Volume    int64          `json:"volume"`
-	Tags      []Tag          `json:"tags"       gorm:"many2many:stock_tags;"`
+	Tags      []Tag          `json:"tags"         gorm:"many2many:stock_tags;"`
+	Groups    []StockGroup   `json:"groups"       gorm:"many2many:stock_group_members;"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `json:"-"          gorm:"index"`
+	DeletedAt gorm.DeletedAt `json:"-"            gorm:"index"`
+}
+
+// StockGroup 自定群組，支援自定群組名稱、說明、顏色；一支股票可加入多個群組
+type StockGroup struct {
+	ID          uint           `json:"id"          gorm:"primarykey"`
+	Name        string         `json:"name"        gorm:"uniqueIndex;not null"`
+	Description string         `json:"description" gorm:"type:text"`
+	Color       string         `json:"color"       gorm:"default:'#3b82f6'"`
+	Stocks      []Stock        `json:"stocks,omitempty" gorm:"many2many:stock_group_members;"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"-"           gorm:"index"`
 }
 
 // Tag 使用者自訂標籤

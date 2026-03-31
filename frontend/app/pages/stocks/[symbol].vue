@@ -503,6 +503,81 @@ const avgVolume = computed(() => {
   return Math.round(avg).toLocaleString()
 })
 
+// ── 券商勝率 ─────────────────────────────────────────────────────
+interface BrokerWinrate {
+  broker_name: string
+  total_trades: number
+  win_trades: number
+  win_rate_pct: number
+  avg_return_pct: number
+  avg_holding_days: number
+  max_return_pct: number
+  last_entry_date: string
+}
+interface BrokerTradeEvent {
+  id: number
+  broker_name: string
+  entry_date: string
+  exit_date: string | null
+  entry_close: number
+  exit_close: number | null
+  return_pct: number | null
+  holding_days: number | null
+  is_win: boolean | null
+}
+
+const { data: winrateData, refresh: refreshWinrate } = await useFetch<BrokerWinrate[]>(
+  `/api/stocks/${symbol}/broker-winrate?min_entries=2`,
+  { default: () => [] }
+)
+const expandedWinrateBroker = ref('')
+const winrateEvents         = ref<BrokerTradeEvent[]>([])
+const winrateEventsLoading  = ref(false)
+const winrateTriggerState   = ref<'idle' | 'running' | 'done' | 'error'>('idle')
+
+async function toggleWinrateBroker(brokerName: string) {
+  if (expandedWinrateBroker.value === brokerName) {
+    expandedWinrateBroker.value = ''
+    return
+  }
+  expandedWinrateBroker.value = brokerName
+  winrateEventsLoading.value  = true
+  try {
+    winrateEvents.value = await $fetch<BrokerTradeEvent[]>(
+      `/api/stocks/${symbol}/broker-winrate/events?broker=${encodeURIComponent(brokerName)}`
+    )
+  } finally {
+    winrateEventsLoading.value = false
+  }
+}
+
+async function triggerWinrate() {
+  if (winrateTriggerState.value === 'running') return
+  winrateTriggerState.value = 'running'
+  try {
+    await $fetch('/api/winrate/trigger-single', { method: 'POST', body: { symbol } })
+    winrateTriggerState.value = 'done'
+    setTimeout(() => { winrateTriggerState.value = 'idle' }, 3000)
+    await refreshWinrate()
+  } catch {
+    winrateTriggerState.value = 'error'
+    setTimeout(() => { winrateTriggerState.value = 'idle' }, 3000)
+  }
+}
+
+function winrateClass(pct: number): string {
+  if (pct >= 60) return 'wr-high'
+  if (pct >= 40) return 'wr-mid'
+  return 'wr-low'
+}
+
+function returnColorClass(val: number | null): string {
+  if (val === null) return ''
+  if (val > 0) return 'col-up'
+  if (val < 0) return 'col-dn'
+  return ''
+}
+
 // ── 單檔刷新（SSE）────────────────────────
 type RefreshStage = 'idle' | 'running' | 'done' | 'error'
 const refreshStage   = ref<RefreshStage>('idle')
@@ -918,6 +993,84 @@ function startRefresh() {
                 </tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ 券商勝率分析 ══ -->
+      <div class="major-panel winrate-panel">
+        <div class="major-topbar">
+          <div class="major-topbar-left">
+            <h2 class="table-heading">券商勝率分析</h2>
+            <span class="table-count">至少 2 次交易</span>
+          </div>
+          <button
+            class="range-btn"
+            :class="{ 'range-btn--active': winrateTriggerState === 'running' }"
+            :disabled="winrateTriggerState === 'running'"
+            @click="triggerWinrate"
+          >
+            {{ winrateTriggerState === 'running' ? '計算中…' : winrateTriggerState === 'done' ? '已更新' : '重新計算' }}
+          </button>
+        </div>
+
+        <div v-if="!winrateData?.length" class="chart-empty">
+          尚無勝率資料，請點「重新計算」。
+        </div>
+        <div v-else class="wr-list">
+          <div
+            v-for="row in winrateData"
+            :key="row.broker_name"
+            class="wr-row"
+          >
+            <div class="wr-summary" @click="toggleWinrateBroker(row.broker_name)">
+              <div class="wr-broker">{{ row.broker_name }}</div>
+              <div class="wr-badge" :class="winrateClass(row.win_rate_pct)">
+                {{ row.win_rate_pct.toFixed(1) }}%
+              </div>
+              <div class="wr-meta">
+                <span>交易 {{ row.total_trades }} 次</span>
+                <span>平均 <span :class="returnColorClass(row.avg_return_pct)">{{ (row.avg_return_pct > 0 ? '+' : '') + row.avg_return_pct.toFixed(2) }}%</span></span>
+                <span>持倉 {{ row.avg_holding_days.toFixed(0) }} 日</span>
+                <span class="td-muted">最近 {{ row.last_entry_date?.slice(0, 10) }}</span>
+              </div>
+              <div class="wr-expand-icon">{{ expandedWinrateBroker === row.broker_name ? '▲' : '▼' }}</div>
+            </div>
+
+            <!-- Event rows -->
+            <div v-if="expandedWinrateBroker === row.broker_name" class="wr-events">
+              <div v-if="winrateEventsLoading" class="chart-empty" style="padding:12px 0">載入中…</div>
+              <table v-else class="major-table wr-table">
+                <thead>
+                  <tr>
+                    <th>進場日</th>
+                    <th>出場日</th>
+                    <th class="ra">進場收</th>
+                    <th class="ra">出場收</th>
+                    <th class="ra">報酬</th>
+                    <th class="ra">持倉天</th>
+                    <th class="ca">狀態</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="e in winrateEvents" :key="e.id">
+                    <td>{{ e.entry_date?.slice(0, 10) }}</td>
+                    <td>{{ e.exit_date?.slice(0, 10) ?? '—' }}</td>
+                    <td class="ra">{{ e.entry_close.toFixed(2) }}</td>
+                    <td class="ra">{{ e.exit_close?.toFixed(2) ?? '—' }}</td>
+                    <td class="ra" :class="returnColorClass(e.return_pct ?? null)">
+                      {{ e.return_pct !== null ? (e.return_pct > 0 ? '+' : '') + e.return_pct.toFixed(2) + '%' : '—' }}
+                    </td>
+                    <td class="ra">{{ e.holding_days ?? '—' }}</td>
+                    <td class="ca">
+                      <span v-if="e.is_win === true"  class="badge-win">獲利</span>
+                      <span v-else-if="e.is_win === false" class="badge-loss">虧損</span>
+                      <span v-else class="badge-open">持倉</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -1711,4 +1864,70 @@ function startRefresh() {
   .major-body { grid-template-columns: 1fr; }
   .major-side:first-child { border-right: none; border-bottom: 1px solid var(--line); }
 }
+
+/* ── Winrate Panel ─────────────────────────────────────────── */
+.winrate-panel { margin-top: 24px; }
+
+.wr-list { padding: 0 0 8px; }
+.wr-row  { border-bottom: 1px solid var(--line); }
+.wr-row:last-child { border-bottom: none; }
+
+.wr-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 20px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.wr-summary:hover { background: var(--s1); }
+
+.wr-broker {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--t1);
+  min-width: 130px;
+  flex-shrink: 0;
+}
+
+.wr-badge {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 100px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.wr-high { background: oklch(37% 0.14 150 / 0.25); color: oklch(62% 0.16 150); }
+.wr-mid  { background: oklch(37% 0.10 82  / 0.25); color: oklch(70% 0.14 82);  }
+.wr-low  { background: oklch(37% 0.14 25  / 0.25); color: oklch(62% 0.16 25);  }
+
+.wr-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 12.5px;
+  color: var(--t2);
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.wr-expand-icon {
+  font-size: 10px;
+  color: var(--t3);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.wr-events { padding: 0 20px 12px; }
+.wr-table  { width: 100%; }
+
+.badge-win, .badge-loss, .badge-open {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 100px;
+}
+.badge-win  { background: oklch(37% 0.14 150 / 0.25); color: oklch(62% 0.16 150); }
+.badge-loss { background: oklch(37% 0.14 25  / 0.25); color: oklch(62% 0.16 25);  }
+.badge-open { background: oklch(37% 0.08 240 / 0.25); color: oklch(62% 0.10 240); }
 </style>

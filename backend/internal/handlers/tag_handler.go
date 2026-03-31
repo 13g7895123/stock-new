@@ -118,13 +118,14 @@ func (h *TagHandler) SetStockTags(c *gin.Context) {
 // GET /api/stocks  — 覆寫 list 支援 industry / tag 篩選 + load tags
 // 此方法掛在 TagHandler 避免循環依賴，供 routes 選用
 
-// GET /api/stocks?industry=半導體&tag_id=1&q=台積電
+// GET /api/stocks?industry=半導體&tag_id=1&group_id=2&q=台積電
 func (h *TagHandler) ListStocks(c *gin.Context) {
 	q := c.Query("q")
 	industry := c.Query("industry")
 	tagIDStr := c.Query("tag_id")
+	groupIDStr := c.Query("group_id")
 
-	db := h.db.Preload("Tags")
+	db := h.db.Preload("Tags").Preload("Groups")
 
 	if q != "" {
 		like := "%" + q + "%"
@@ -138,6 +139,13 @@ func (h *TagHandler) ListStocks(c *gin.Context) {
 		if err == nil {
 			db = db.Joins("JOIN stock_tags ON stock_tags.stock_id = stocks.id").
 				Where("stock_tags.tag_id = ?", tagID)
+		}
+	}
+	if groupIDStr != "" {
+		groupID, err := strconv.Atoi(groupIDStr)
+		if err == nil && groupID > 0 {
+			db = db.Joins("JOIN stock_group_members ON stock_group_members.stock_id = stocks.id").
+				Where("stock_group_members.stock_group_id = ?", groupID)
 		}
 	}
 
