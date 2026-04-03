@@ -48,10 +48,10 @@ func (ChipsHolderDistribution) TableName() string { return "chips_holder_distrib
 // 供後台 GET /api/chips/logs 查詢，協助排查爬取失敗原因。
 type ChipsRunLog struct {
 	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	JobID     *uint     `gorm:"index"                    json:"job_id"`  // nil = handler 層（job 尚未建立）
-	Level     string    `gorm:"size:10;default:'info'"   json:"level"`   // info | warn | error
-	Step      string    `gorm:"size:60"                  json:"step"`    // dispatch | fetch_retry | fetch_fail | parse_fail | save_fail | job_start | job_end
-	Symbol    string    `gorm:"size:10"                  json:"symbol"`  // 空字串 = job 層級
+	JobID     *uint     `gorm:"index"                    json:"job_id"` // nil = handler 層（job 尚未建立）
+	Level     string    `gorm:"size:10;default:'info'"   json:"level"`  // info | warn | error
+	Step      string    `gorm:"size:60"                  json:"step"`   // dispatch | fetch_retry | fetch_fail | parse_fail | save_fail | job_start | job_end
+	Symbol    string    `gorm:"size:10"                  json:"symbol"` // 空字串 = job 層級
 	Message   string    `gorm:"type:text"                json:"message"`
 	CreatedAt time.Time `gorm:"index"                    json:"created_at"`
 }
