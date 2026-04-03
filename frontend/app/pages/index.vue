@@ -32,6 +32,7 @@ interface SyncState {
 }
 
 const { data: stocks, status, refresh } = await useFetch<Stock[]>('/api/stocks')
+const { logCall } = useApiLogger()
 
 // ── 籌碼金字塔 ────────────────────────────
 interface ChipsStatus {
@@ -70,7 +71,29 @@ async function triggerChips() {
   chipsTriggering.value = true
   chipsError.value = ''
   try {
-    await $fetch('/api/chips/trigger', { method: 'POST' })
+    await logCall({
+      action: '觸發籌碼爬取',
+      trigger: '手動按鈕 [立即爬取]',
+      method: 'POST',
+      endpoint: '/api/chips/trigger',
+      analysis: [
+        '啟動 Playwright 爬蟲批次抓取所有股票的持股分布資料（norway.twsthr.info）。',
+        '',
+        '回應格式（成功）：{"ok": true}',
+        '回應格式（失敗）：{"error": "..."} 附帶 HTTP 狀態碼',
+        '',
+        '特殊狀態碼處理：',
+        '  • 409 Conflict  → 已有任務執行中。前端啟動 3s 輪詢 /api/chips/status 監控進度。',
+        '  • 400 Bad Request → 股票清單為空，需先同步股票（GET /api/scraper/stocks）。',
+        '',
+        '觸發後流程：',
+        '  1. 後端將任務推入工作佇列（Redis / Channel）',
+        '  2. scraper 容器消費任務，Playwright 瀏覽持股頁面並解析 SVG 圓餅圖',
+        '  3. 解析後的持股分布寫入 PostgreSQL stock_holders 資料表',
+        '  4. 前端每 3s 輪詢 /api/chips/status 取得進度直到 status = completed / failed',
+      ].join('\n'),
+      call: () => $fetch('/api/chips/trigger', { method: 'POST' }),
+    })
     await refreshChips()
     startChipsPolling()
   } catch (err: unknown) {
@@ -259,7 +282,33 @@ async function triggerPriceSync() {
   priceSyncTriggering.value = true
   priceSyncError.value = ''
   try {
-    await $fetch('/api/scraper/prices/all/trigger', { method: 'POST' })
+    await logCall({
+      action: '觸發全量日K爬取',
+      trigger: '手動按鈕 [啟動全量回填]',
+      method: 'POST',
+      endpoint: '/api/scraper/prices/all/trigger',
+      analysis: [
+        '啟動全股票歷史日K批次爬取作業，向 TWSE/TPEX OpenAPI 逐月拉取每支股票的 OHLCV 資料。',
+        '',
+        '回應格式（成功）：{"ok": true}',
+        '回應格式（失敗）：{"error": "..."} 附帶 HTTP 狀態碼',
+        '',
+        '特殊狀態碼：',
+        '  • 409 Conflict    → 已有爬取作業執行中。',
+        '  • 400 Bad Request → 股票清單為空，需先同步。',
+        '',
+        '後端爬取邏輯：',
+        '  • 上市股票 → TWSE OpenAPI  /exchangeReport/STOCK_DAY',
+        '  • 上櫃股票 → TPEX OpenAPI  /web/stock/aftertrading/otc_quotes/index',
+        '  • 每月請求間隔 120ms，錯誤後 300ms，最多回填 360 個月（~30 年）',
+        '  • 資料寫入 PostgreSQL daily_prices 資料表：',
+        '      date (DATE), open, high, low, close (DECIMAL), volume (BIGINT)',
+        '',
+        '進度監控：前端每 3s 輪詢 /api/scraper/prices/all/status，',
+        '  取得 {total, success, fail, status, message} 直到完成。',
+      ].join('\n'),
+      call: () => $fetch('/api/scraper/prices/all/trigger', { method: 'POST' }),
+    })
     await refreshPriceSync()
     startPriceSyncPolling()
   } catch (err: unknown) {
@@ -356,7 +405,35 @@ async function triggerMajor() {
   majorTriggering.value = true
   majorError.value = ''
   try {
-    await $fetch('/api/major/trigger', { method: 'POST', body: { days: majorDays.value } })
+    await logCall({
+      action: '觸發主力進出爬取',
+      trigger: `手動按鈕 [觸發主力爬取] days=${majorDays.value}`,
+      method: 'POST',
+      endpoint: '/api/major/trigger',
+      requestBody: { days: majorDays.value },
+      analysis: [
+        `啟動主力進出批次爬取任務，抓取各券商分點的買賣超明細（days=${majorDays.value}）。`,
+        '',
+        '請求 body：{"days": number}',
+        '  • days=1   → 今日主力進出',
+        '  • days=5   → 近 5 日累計',
+        '  • days=10  → 近 10 日累計',
+        '  • days=20  → 近 20 日累計',
+        '',
+        '回應格式（成功）：{"ok": true}',
+        '回應格式（失敗）：{"error": "..."} 附帶 HTTP 狀態碼',
+        '',
+        '後端爬取流程：',
+        '  1. 遍歷所有股票，對每支股票呼叫內部 scraper 抓取分點明細',
+        '  2. 資料來源：券商 API（Broker API）/ TWSE 三大法人',
+        '  3. 解析後寫入 PostgreSQL broker_trades 資料表：',
+        '     symbol, broker_id, broker_name, buy_vol, sell_vol, net_vol, date',
+        '  4. 主力識別邏輯：net_vol 排名前 N 名的券商分點視為主力',
+        '',
+        '進度監控：前端每 3s 輪詢 /api/major/status 取得 {total, success, fail, status}。',
+      ].join('\n'),
+      call: () => $fetch('/api/major/trigger', { method: 'POST', body: { days: majorDays.value } }),
+    })
     await refreshMajor()
     startMajorPolling()
   } catch (err: unknown) {
@@ -600,8 +677,78 @@ function startSSE(url: string, label: string) {
   }
 }
 
-function syncStocks() { startSSE('/api/scraper/stocks', 'stocks') }
-function syncPrices() { startSSE('/api/scraper/prices', 'prices') }
+function syncStocks() {
+  const { pushEntry } = useApiLogger()
+  const now = new Date()
+  const timestamp =
+    now.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
+    '.' + String(now.getMilliseconds()).padStart(3, '0')
+  pushEntry({
+    timestamp,
+    action: '同步股票清單（SSE）',
+    trigger: '手動按鈕 [同步股票清單]',
+    method: 'GET',
+    endpoint: '/api/scraper/stocks',
+    responseAnalysis: [
+      '使用 Server-Sent Events（SSE）串流方式同步台股股票清單。',
+      '',
+      'SSE 事件格式（每個 data: 行為一個 JSON 事件）：',
+      '  • stage="fetching"  progress=0~100  url="..."  → 正在從 TWSE/TPEX 拉取',
+      '  • stage="saving"    total=N  synced=M          → 正在寫入資料庫',
+      '  • stage="done"      progress=100               → 完成，前端重新載入股票列表',
+      '  • stage="error"     error="..."                → 失敗',
+      '',
+      '資料來源：',
+      '  • 上市 → TWSE OpenAPI /v1/exchangeReport/TAIEX_COMPANY_INFO',
+      '  • 上櫃 → TPEX OpenAPI',
+      '',
+      '寫入目標：PostgreSQL stocks 資料表',
+      '  symbol (VARCHAR PK), name, market (TWSE/TPEX), industry, created_at, updated_at',
+      '',
+      '注意：SSE 連線期間瀏覽器保持長連線，後端推送進度事件，',
+      '  前端解析即時更新 syncState 並顯示進度條。',
+    ].join('\n'),
+    statusCode: 200,
+    responseRaw: '（SSE 串流，無單一 JSON 回應；每個事件見上方格式說明）',
+    durationMs: 0,
+    success: true,
+  })
+  startSSE('/api/scraper/stocks', 'stocks')
+}
+
+function syncPrices() {
+  const { pushEntry } = useApiLogger()
+  const now = new Date()
+  const timestamp =
+    now.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
+    '.' + String(now.getMilliseconds()).padStart(3, '0')
+  pushEntry({
+    timestamp,
+    action: '同步最新收盤價（SSE）',
+    trigger: '手動按鈕 [同步收盤價]',
+    method: 'GET',
+    endpoint: '/api/scraper/prices',
+    responseAnalysis: [
+      '使用 SSE 串流同步所有股票的最新收盤價與漲跌資料。',
+      '',
+      'SSE 事件格式：',
+      '  • stage="fetching" progress=0~100 → 正在從交易所拉取最新價格',
+      '  • stage="done"     progress=100   → 更新完成，前端重新載入持股列表',
+      '  • stage="error"    error="..."    → 失敗',
+      '',
+      '資料更新目標：PostgreSQL stocks 資料表',
+      '  price (DECIMAL), change (DECIMAL), change_pct (DECIMAL), volume (BIGINT), updated_at',
+      '',
+      '這是輕量版更新（只更新最新收盤），不涉及歷史日K。',
+      '歷史日K請使用「全量日K爬取」。',
+    ].join('\n'),
+    statusCode: 200,
+    responseRaw: '（SSE 串流，無單一 JSON 回應）',
+    durationMs: 0,
+    success: true,
+  })
+  startSSE('/api/scraper/prices', 'prices')
+}
 
 const stockList = computed<Stock[]>(() =>
   Array.isArray(stocks.value) ? stocks.value : []
@@ -726,6 +873,17 @@ const settingsOpen = ref(false)
               <path d="M13.2 9.3A5.8 5.8 0 0 1 6.7 2.8a.4.4 0 0 0-.46-.5A6.3 6.3 0 1 0 13.7 9.76a.4.4 0 0 0-.5-.46Z" fill="currentColor"/>
             </svg>
           </button>
+
+          <!-- Admin Panel -->
+          <NuxtLink to="/admin" class="btn-admin" aria-label="後台管理">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.9"/>
+              <rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.55"/>
+              <rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.45"/>
+              <rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.75"/>
+            </svg>
+            後台
+          </NuxtLink>
         </nav>
       </div>
     </header>
@@ -770,6 +928,7 @@ const settingsOpen = ref(false)
           <button class="classic-toggle-btn" :aria-label="isDark ? '切換亮色' : '切換暗色'" @click="toggleTheme">
             <span v-if="isDark">☀</span><span v-else>☾</span>
           </button>
+          <NuxtLink to="/admin" class="classic-admin-btn" aria-label="後台管理">後台</NuxtLink>
         </div>
       </div>
     </header>
@@ -1759,6 +1918,24 @@ const settingsOpen = ref(false)
 }
 .btn-icon:hover { background: var(--s3); border-color: var(--line2); color: var(--t1); }
 
+.btn-admin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  color: var(--t2);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+.btn-admin:hover { background: var(--s3); border-color: var(--line2); color: var(--t1); }
+
 /* ═══════════════════════════════════════
    Sync Bar
 ═══════════════════════════════════════ */
@@ -2514,6 +2691,21 @@ const settingsOpen = ref(false)
   transition: border-color 0.15s, color 0.15s;
 }
 .classic-toggle-btn:hover { border-color: var(--gold); color: var(--gold); }
+
+.classic-admin-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border: 1px solid var(--line2);
+  color: var(--t2);
+  background: none;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.classic-admin-btn:hover { border-color: var(--gold); color: var(--gold); }
 
 /* ════════════════════════════════════════
    Classic Portal  ·  (v-if="isClassic")
