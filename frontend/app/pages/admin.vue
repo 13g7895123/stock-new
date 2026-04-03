@@ -178,7 +178,15 @@ const schemeColors: Record<string, string> = {
   twse_tpex_api:      '#a78ce8',
   broker_api:         '#f0a842',
 }
+const schemeLabels: Record<string, string> = {
+  go_http:           'Go HTTP',
+  python_http:       'Python HTTP',
+  python_playwright: 'Python Playwright',
+  twse_tpex_api:     'TWSE/TPEx API',
+  broker_api:        '券商 API',
+}
 function schemeColor(id: string) { return schemeColors[id] ?? '#8b949e' }
+function schemeLabel(id: string) { return schemeLabels[id] ?? id }
 
 const categoryLabels: Record<string, string> = { scraper: '爬蟲', sync: '同步' }
 
@@ -538,6 +546,7 @@ async function saveHolidays() {
 interface JobStatus {
   id?: number
   status: string
+  scheme?: string
   total?: number
   success?: number
   fail?: number
@@ -1613,6 +1622,22 @@ onUnmounted(() => {
                   </span>
                 </div>
                 <p class="job-card__desc">{{ def.description }}</p>
+                <!-- 方案標籤：優先顯示 job 裡記錄的 scheme，否則從 features 設定讀取 -->
+                <div class="job-scheme-row">
+                  <span class="job-scheme-label">方案：</span>
+                  <template v-if="jobStatuses[def.key]?.scheme">
+                    <span class="job-scheme-pill" :style="{ background: schemeColor(jobStatuses[def.key]!.scheme!), color: '#fff' }">
+                      {{ schemeLabel(jobStatuses[def.key]!.scheme!) }}
+                    </span>
+                    <span class="job-scheme-note">（上次 job）</span>
+                  </template>
+                  <template v-else>
+                    <span class="job-scheme-pill job-scheme-pill--active" :style="{ background: schemeColor(features.find(f => f.id === (def.key === 'chips' ? 'chips_pyramid' : def.key === 'prices' ? 'daily_price' : def.key === 'major' ? 'major_chips' : ''))?.config?.primary ?? '') }">
+                      {{ schemeLabel(features.find(f => f.id === (def.key === 'chips' ? 'chips_pyramid' : def.key === 'prices' ? 'daily_price' : def.key === 'major' ? 'major_chips' : ''))?.config?.primary ?? '') || '—' }}
+                    </span>
+                    <span class="job-scheme-note">（設定中）</span>
+                  </template>
+                </div>
               </div>
 
               <!-- Stats Row -->
@@ -2567,6 +2592,15 @@ onUnmounted(() => {
 .job-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .job-card__name { font-size: 14px; font-weight: 600; color: var(--t1); flex: 1; }
 .job-card__desc { font-size: 12px; color: var(--t3); line-height: 1.5; padding-left: 16px; }
+
+.job-scheme-row { display: flex; align-items: center; gap: 6px; padding-left: 16px; margin-top: 5px; flex-wrap: wrap; }
+.job-scheme-label { font-size: 11px; color: var(--t3); }
+.job-scheme-pill {
+  font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 20px;
+  opacity: 0.88; letter-spacing: 0.02em;
+}
+.job-scheme-pill--active { background: var(--s3) !important; color: var(--t2); border: 1px solid var(--line2); }
+.job-scheme-note { font-size: 10px; color: var(--t3); }
 
 .job-status-badge {
   font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; flex-shrink: 0;

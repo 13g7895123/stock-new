@@ -7,7 +7,8 @@ type ChipsSyncJob struct {
 	ID          uint       `gorm:"primaryKey;autoIncrement" json:"id"`
 	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at"`
-	Status      string     `gorm:"default:running"         json:"status"` // running|completed|failed|never
+	Status      string     `gorm:"default:running"         json:"status"` // running|completed|failed|cancelled|never
+	Scheme      string     `gorm:"default:''"              json:"scheme"` // go_http|python_http|python_playwright
 	Total       int        `json:"total"`
 	Success     int        `json:"success"`
 	Fail        int        `json:"fail"`

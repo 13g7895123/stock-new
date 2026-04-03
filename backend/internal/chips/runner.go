@@ -64,6 +64,11 @@ func (r *Runner) RecoverStaleJobs() error {
 }
 
 func (r *Runner) Trigger(symbol string) (int, error) {
+	return r.TriggerWithScheme(symbol, "")
+}
+
+// TriggerWithScheme 由 handler 呼叫，帶入方案名稱記錄到 job 中
+func (r *Runner) TriggerWithScheme(symbol, scheme string) (int, error) {
 	r.mu.Lock()
 	if r.running {
 		r.mu.Unlock()
@@ -90,7 +95,7 @@ func (r *Runner) Trigger(symbol string) (int, error) {
 		return 0, ErrNoSymbols
 	}
 
-	go r.runJob(ctx, symbols)
+	go r.runJob(ctx, symbols, scheme)
 	return len(symbols), nil
 }
 
@@ -147,12 +152,13 @@ func (r *Runner) loadSymbols() ([]string, error) {
 	return symbols, nil
 }
 
-func (r *Runner) runJob(ctx context.Context, symbols []string) {
+func (r *Runner) runJob(ctx context.Context, symbols []string, scheme string) {
 	defer r.clearRunning()
 
 	job := models.ChipsSyncJob{
 		StartedAt: time.Now(),
 		Status:    "running",
+		Scheme:    scheme,
 		Total:     len(symbols),
 		Success:   0,
 		Fail:      0,
@@ -187,7 +193,7 @@ func (r *Runner) runJob(ctx context.Context, symbols []string) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r.worker(job.ID, jobs, results)
+			r.worker(job.ID, ctx, jobs, results)
 		}()
 	}
 	go func() {
@@ -274,18 +280,22 @@ func (r *Runner) runJob(ctx context.Context, symbols []string) {
 	log.Printf("[chips] job %d finished status=%s success=%d fail=%d", job.ID, status, success, fail)
 }
 
-func (r *Runner) worker(jobID uint, jobs <-chan string, results chan<- scrapeResult) {
+func (r *Runner) worker(jobID uint, ctx context.Context, jobs <-chan string, results chan<- scrapeResult) {
 	for symbol := range jobs {
-		ok, err := r.scrapeSymbol(jobID, symbol)
+		ok, err := r.scrapeSymbol(ctx, jobID, symbol)
 		results <- scrapeResult{symbol: symbol, success: ok, err: err}
 		if r.requestDelay > 0 {
-			time.Sleep(r.requestDelay)
+			select {
+			case <-time.After(r.requestDelay):
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }
 
-func (r *Runner) scrapeSymbol(jobID uint, symbol string) (bool, error) {
-	html, err := r.fetchPage(jobID, symbol)
+func (r *Runner) scrapeSymbol(ctx context.Context, jobID uint, symbol string) (bool, error) {
+	html, err := r.fetchPage(ctx, jobID, symbol)
 	if err != nil {
 		WriteLog(r.db, jobPtr(jobID), "error", "fetch_fail", symbol, err.Error())
 		return false, err
@@ -308,17 +318,22 @@ func (r *Runner) scrapeSymbol(jobID uint, symbol string) (bool, error) {
 	return true, nil
 }
 
-func (r *Runner) fetchPage(jobID uint, symbol string) (string, error) {
+func (r *Runner) fetchPage(ctx context.Context, jobID uint, symbol string) (string, error) {
 	const maxRetries = 3
 	delays := []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second}
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
+		// ctx 可中斷的 retry delay
 		if attempt > 0 {
-			time.Sleep(delays[attempt-1])
+			select {
+			case <-time.After(delays[attempt-1]):
+			case <-ctx.Done():
+				return "", context.Canceled
+			}
 		}
 
-		req, err := http.NewRequest(http.MethodGet, "https://norway.twsthr.info/StockHolders.aspx?stock="+symbol, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://norway.twsthr.info/StockHolders.aspx?stock="+symbol, nil)
 		if err != nil {
 			return "", err
 		}

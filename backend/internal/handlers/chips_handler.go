@@ -94,7 +94,7 @@ func (h *ChipsHandler) triggerByScheme(scheme string, symbol string) (int, error
 	case "python_playwright":
 		return 0, h.callPythonScraper("playwright", symbol)
 	default: // go_http
-		return h.runner.Trigger(symbol)
+		return h.runner.TriggerWithScheme(symbol, scheme)
 	}
 }
 
@@ -144,6 +144,7 @@ func (h *ChipsHandler) Status(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"id":           job.ID,
 		"status":       job.Status,
+		"scheme":       job.Scheme,
 		"started_at":   job.StartedAt,
 		"completed_at": job.CompletedAt,
 		"total":        job.Total,
@@ -204,14 +205,35 @@ func (h *ChipsHandler) TriggerSingle(c *gin.Context) {
 }
 
 // Cancel POST /api/chips/cancel
-// 取消目前執行中的籌碼爬取 job
+// 取消目前執行中的籌碼爬取 job。
+// 1. 先嘗試透過 Go runner 的 context 優雅取消（適用新版代碼）
+// 2. 同時強制將 DB 中最新的 running job 標為 cancelled（適用舊版 / 任何卡住的 job）
 func (h *ChipsHandler) Cancel(c *gin.Context) {
-	cancelled := h.runner.Cancel()
-	if !cancelled {
+	cancelledInRunner := h.runner.Cancel()
+
+	// 強制將 DB 中處於 running 的最新 job 標為 cancelled
+	now := time.Now()
+	result := h.db.Model(&models.ChipsSyncJob{}).
+		Where("status = ?", "running").
+		Updates(map[string]any{
+			"status":       "cancelled",
+			"completed_at": &now,
+			"message":      "使用者手動取消",
+		})
+
+	dbCancelled := result.RowsAffected > 0
+
+	if !cancelledInRunner && !dbCancelled {
 		c.JSON(http.StatusConflict, gin.H{"error": "沒有執行中的 job"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "取消請求已送出，job 將在處理完目前批次後停止"})
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":                  true,
+		"runner_cancelled":    cancelledInRunner,
+		"db_rows_cancelled":   result.RowsAffected,
+		"message":             "已取消",
+	})
 }
 
 // TriggerCron 由後端 cron goroutine 呼叫（不走 HTTP）
