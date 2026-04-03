@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 
@@ -154,6 +155,55 @@ func (h *TagHandler) ListStocks(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 從 daily_prices 取得最新一日的收盤價、成交量，並計算漲跌
+	if len(stocks) > 0 {
+		symbols := make([]string, len(stocks))
+		for i, s := range stocks {
+			symbols[i] = s.Symbol
+		}
+
+		type priceRow struct {
+			Symbol    string  `gorm:"column:symbol"`
+			Close     float64 `gorm:"column:close"`
+			Volume    int64   `gorm:"column:volume"`
+			PrevClose float64 `gorm:"column:prev_close"`
+		}
+
+		var priceRows []priceRow
+		h.db.Raw(`
+			SELECT symbol, close, volume, COALESCE(prev_close, 0) AS prev_close
+			FROM (
+				SELECT symbol, close, volume,
+				       LAG(close) OVER (PARTITION BY symbol ORDER BY date) AS prev_close,
+				       ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC) AS rn
+				FROM daily_prices
+				WHERE symbol IN ?
+			) t
+			WHERE rn = 1
+		`, symbols).Scan(&priceRows)
+
+		priceMap := make(map[string]priceRow, len(priceRows))
+		for _, r := range priceRows {
+			priceMap[r.Symbol] = r
+		}
+
+		for i := range stocks {
+			if p, ok := priceMap[stocks[i].Symbol]; ok {
+				stocks[i].Price = p.Close
+				stocks[i].Volume = p.Volume
+				if p.PrevClose > 0 {
+					change := p.Close - p.PrevClose
+					stocks[i].Change = math.Round(change*100) / 100
+					stocks[i].ChangePct = math.Round(change/p.PrevClose*10000) / 100
+				} else {
+					stocks[i].Change = 0
+					stocks[i].ChangePct = 0
+				}
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, stocks)
 }
 

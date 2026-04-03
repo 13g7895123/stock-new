@@ -363,7 +363,21 @@
                     <span class="tag-dot" :style="{ background: g.color }"></span>
                     {{ g.name }}
                   </label>
-                  <p v-if="groups.length === 0" class="tag-popover-empty">尚無群組</p>
+                  <div v-if="groups.length === 0" class="tag-popover-no-group">
+                    <p class="tag-popover-empty">尚無群組</p>
+                    <form class="popover-group-create" @submit.prevent="quickCreateGroup">
+                      <input
+                        v-model="quickGroupName"
+                        class="popover-group-input"
+                        type="text"
+                        placeholder="輸入群組名稱…"
+                        maxlength="40"
+                        @click.stop
+                      />
+                      <input v-model="quickGroupColor" class="tag-color-input" type="color" title="選擇顏色" @click.stop />
+                      <button type="submit" class="tag-add-btn" :disabled="!quickGroupName.trim()">+</button>
+                    </form>
+                  </div>
                 </div>
               </td>
               <td class="ca">
@@ -374,7 +388,7 @@
         </table>
 
         <div v-else-if="!tableLoading" class="table-empty">
-          {{ searchQuery || selectedIndustry || selectedTagId ? '查無符合條件的股票' : '尚無資料。請先同步股票清單。' }}
+          {{ searchQuery || selectedIndustry || selectedTagId || selectedGroupId ? '查無符合條件的股票' : '尚無資料。請先同步股票清單。' }}
         </div>
 
       </main>
@@ -621,9 +635,29 @@ async function toggleStockTag(stock: Stock, tagId: number) {
 
 // ── Group Assignment ───────────────────────────────────────────
 const expandedGroupRow = ref('')
+const quickGroupName  = ref('')
+const quickGroupColor = ref('#3b82f6')
 
 function toggleGroupRow(symbol: string) {
   expandedGroupRow.value = expandedGroupRow.value === symbol ? '' : symbol
+  quickGroupName.value  = ''
+  quickGroupColor.value = '#3b82f6'
+}
+
+async function quickCreateGroup() {
+  const name = quickGroupName.value.trim()
+  if (!name) return
+  try {
+    await $fetch('/api/groups', {
+      method: 'POST',
+      body: { name, color: quickGroupColor.value, description: '' }
+    })
+    quickGroupName.value  = ''
+    quickGroupColor.value = '#3b82f6'
+    await fetchGroups()
+  } catch {
+    groupError.value = '建立群組失敗'
+  }
 }
 
 function stockHasGroup(stock: Stock, groupId: number): boolean {
@@ -1185,7 +1219,21 @@ onMounted(async () => {
 }
 .tag-popover-item:hover { color: var(--t1); }
 .tag-popover-item input { cursor: pointer; }
-.tag-popover-empty { font-size: 12.5px; color: var(--t3); }
+.tag-popover-empty { font-size: 12.5px; color: var(--t3); margin-bottom: 6px; }
+.tag-popover-no-group { display: flex; flex-direction: column; gap: 6px; }
+.popover-group-create { display: flex; align-items: center; gap: 5px; }
+.popover-group-input {
+  flex: 1;
+  background: var(--s3);
+  border: 1px solid var(--line2);
+  border-radius: 6px;
+  color: var(--t1);
+  font-size: 12px;
+  padding: 4px 7px;
+  outline: none;
+  min-width: 0;
+}
+.popover-group-input:focus { border-color: var(--gold); }
 
 .row-link {
   font-size: 12.5px;
