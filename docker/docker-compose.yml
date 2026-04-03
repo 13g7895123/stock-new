@@ -33,30 +33,11 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASS: ${DB_PASS:-postgres}
       DB_NAME: ${DB_NAME:-stockdb}
-      SCRAPER_URL: http://scraper:5100
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - stock-net
-
-  scraper:
-    build:
-      context: ../scraper
-      dockerfile: Dockerfile
-    container_name: stock_scraper
-    environment:
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASS:-postgres}@postgres:5432/${DB_NAME:-stockdb}
-      SCRAPER_PORT: 5100
-      CONCURRENCY: ${SCRAPER_CONCURRENCY:-3}
-      REQUEST_DELAY: ${SCRAPER_REQUEST_DELAY:-2.0}
-      HEADLESS: "true"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - stock-net
-    restart: unless-stopped
 
   frontend:
     build:
