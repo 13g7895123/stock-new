@@ -1002,6 +1002,16 @@ const settingsOpen = ref(false)
           </ul>
         </article>
 
+        <!-- Card 2.5: Watchlist (1 col) -->
+        <article class="card card--action">
+          <p class="card-eyebrow">Watchlist · 關注股池</p>
+          <h2 class="card-title">關注股池</h2>
+          <p class="card-desc">設定你關注的群組與標籤，快速查看各池子的持股概況。</p>
+          <NuxtLink to="/watchlist" class="ghost-btn">
+            前往股池 <span class="ghost-btn__arr">→</span>
+          </NuxtLink>
+        </article>
+
         <!-- Card 3: Sync Stocks (1 col) -->
         <article class="card card--action">
           <p class="card-eyebrow">Data Sync</p>
@@ -1335,6 +1345,19 @@ const settingsOpen = ref(false)
               <span class="si-val">{{ syncing ? '進行中' : '閒置' }}</span>
             </li>
           </ul>
+        </article>
+
+        <!-- ── Watchlist (1 col) ── -->
+        <article class="card card-watchlist">
+          <p class="eyebrow eyebrow-gold">Watchlist · 關注股池</p>
+          <h2 class="card-title">關注股池</h2>
+          <p class="card-desc">設定你關注的群組與標籤，快速查看各池子的持股概況與漲跌走勢。</p>
+          <NuxtLink to="/watchlist" class="link-btn">
+            前往股池
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M2 7h10M8.5 3.5l4 3.5-4 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </NuxtLink>
         </article>
 
         <!-- ── K-Chart Lookup (1 col, featured) ── -->
@@ -2047,11 +2070,12 @@ const settingsOpen = ref(false)
 }
 
 /* Card column spans */
-.card-overview { grid-column: span 2; min-height: 230px; }
-.card-status   { grid-column: span 1; }
-.card-jump     { grid-column: span 1; position: relative; }
-.card-sync     { grid-column: span 1; min-height: 200px; }
-.card-chips    { grid-column: span 2; }
+.card-overview   { grid-column: span 2; min-height: 230px; }
+.card-status     { grid-column: span 1; }
+.card-watchlist  { grid-column: span 1; min-height: 200px; }
+.card-jump       { grid-column: span 1; position: relative; }
+.card-sync       { grid-column: span 1; min-height: 200px; }
+.card-chips      { grid-column: span 2; }
 
 .major-days-row {
   display: flex;
