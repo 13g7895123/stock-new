@@ -138,6 +138,14 @@ func Setup(db *gorm.DB) *gin.Engine {
 			settingsGroup.GET("/features", settingsHandler.GetAll)
 			settingsGroup.PUT("/features/:id", settingsHandler.UpdateFeature)
 		}
+
+		scheduleHandler := handlers.NewScheduleHandler(db)
+		scheduleGroup := api.Group("/schedules")
+		{
+			scheduleGroup.GET("", scheduleHandler.GetAll)
+			scheduleGroup.PUT("/:task_id", scheduleHandler.Update)
+			scheduleGroup.POST("/:task_id/run", scheduleHandler.ManualRun)
+		}
 	}
 
 	return r

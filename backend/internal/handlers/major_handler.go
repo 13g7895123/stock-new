@@ -198,3 +198,17 @@ func (h *MajorHandler) GetBySymbol(c *gin.Context) {
 		"sell":      sell,
 	})
 }
+
+// TriggerMajorCron 由排程器呼叫，觸發主力進出爬取（非 HTTP）
+func TriggerMajorCron(db *gorm.DB, days int) error {
+	runner := getMajorRunner(db)
+	if days <= 0 {
+		days = 1
+	}
+	_, err := runner.Trigger("", days)
+	if err == majorrunner.ErrJobRunning {
+		log.Printf("[major-cron] 已有作業執行中，略過本次排程 days=%d", days)
+		return nil
+	}
+	return err
+}

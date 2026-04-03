@@ -12,13 +12,13 @@ useHead({
 })
 
 // ── Section 導航 ──────────────────────────────────────────────
-type Section = 'settings' | 'logs' | 'db'
+type Section = 'settings' | 'logs' | 'db' | 'schedule'
 const route = useRoute()
 const activeSection = ref<Section>('settings')
 
 onMounted(() => {
   const s = route.query.section as string
-  if (s === 'settings' || s === 'logs' || s === 'db') activeSection.value = s
+  if (s === 'settings' || s === 'logs' || s === 'db' || s === 'schedule') activeSection.value = s
 })
 
 watch(activeSection, (s) => {
@@ -290,10 +290,178 @@ function formatJson(val: unknown): string {
   }
 }
 
+// ══════════════════════════════════════════════════════════════
+// 排程管理 Section
+// ══════════════════════════════════════════════════════════════
+interface Schedule {
+  task_id: string
+  enabled: boolean
+  type: string
+  hour: number
+  minute: number
+  weekday: number
+  params: string
+  last_run_at: string | null
+  next_run_at: string | null
+  updated_at: string
+}
+interface ScheduleEntry {
+  id: string
+  label: string
+  description: string
+  has_params: boolean
+  schedule: Schedule
+}
+interface ScheduleDraft {
+  enabled: boolean
+  type: 'manual' | 'daily' | 'weekly'
+  hour: number
+  minute: number
+  weekday: number
+  days: number
+}
+
+const schedules = ref<ScheduleEntry[]>([])
+const scheduleDrafts = ref<Record<string, ScheduleDraft>>({})
+const scheduleLoading = ref(false)
+const scheduleSaving = ref<Record<string, boolean>>({})
+const scheduleRunning = ref<Record<string, boolean>>({})
+const scheduleSaved = ref<Record<string, boolean>>({})
+const scheduleError = ref('')
+const weekdayNames = ['週日', '週一', '週二', '週三', '週四', '週五', '週六']
+
+function parseScheduleDraft(s: Schedule, hasParams: boolean): ScheduleDraft {
+  let days = 1
+  if (hasParams) {
+    try { days = (JSON.parse(s.params) as { days?: number }).days ?? 1 } catch {}
+  }
+  return {
+    enabled: s.enabled,
+    type: (s.type as 'manual' | 'daily' | 'weekly') || 'manual',
+    hour: s.hour,
+    minute: s.minute,
+    weekday: s.weekday,
+    days,
+  }
+}
+
+async function fetchSchedules() {
+  scheduleLoading.value = true
+  scheduleError.value = ''
+  try {
+    const data = await logCall({
+      action: '載入排程設定',
+      trigger: '排程管理頁 / 載入',
+      method: 'GET',
+      endpoint: '/api/schedules',
+      analysis: '取得所有任務的排程設定（enabled, type, hour, minute, weekday, params, last_run_at, next_run_at）',
+      call: () => $fetch<ScheduleEntry[]>('/api/schedules'),
+    })
+    schedules.value = data
+    for (const e of data) {
+      scheduleDrafts.value[e.id] = parseScheduleDraft(e.schedule, e.has_params)
+    }
+  } catch (e: unknown) {
+    const err = e as { message?: string }
+    scheduleError.value = err.message ?? '載入失敗'
+  } finally {
+    scheduleLoading.value = false
+  }
+}
+
+async function saveSchedule(entry: ScheduleEntry) {
+  const id = entry.id
+  const d = scheduleDrafts.value[id]
+  if (!d) return
+  scheduleSaving.value[id] = true
+  scheduleError.value = ''
+  try {
+    const body = {
+      enabled: d.enabled,
+      type: d.type,
+      hour: d.hour,
+      minute: d.minute,
+      weekday: d.weekday,
+      params: entry.has_params ? JSON.stringify({ days: d.days }) : '{}',
+    }
+    const updated = await logCall({
+      action: '儲存排程設定',
+      trigger: `儲存排程 [任務：${entry.label}]`,
+      method: 'PUT',
+      endpoint: `/api/schedules/${id}`,
+      requestBody: body,
+      analysis: '更新任務排程設定並計算 next_run_at。\ntype=manual 時不會自動觸發。\n回應為更新後的 TaskSchedule 物件。',
+      call: () => $fetch<Schedule>(`/api/schedules/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    })
+    const idx = schedules.value.findIndex(e => e.id === id)
+    if (idx !== -1) schedules.value[idx].schedule = updated
+    scheduleDrafts.value[id] = parseScheduleDraft(updated, entry.has_params)
+    scheduleSaved.value[id] = true
+    setTimeout(() => { scheduleSaved.value[id] = false }, 2000)
+  } catch (e: unknown) {
+    const err = e as { message?: string }
+    scheduleError.value = err.message ?? '儲存失敗'
+  } finally {
+    scheduleSaving.value[id] = false
+  }
+}
+
+async function runNow(entry: ScheduleEntry) {
+  const id = entry.id
+  scheduleRunning.value[id] = true
+  scheduleError.value = ''
+  try {
+    await logCall({
+      action: '立即執行任務',
+      trigger: `手動觸發 [任務：${entry.label}]`,
+      method: 'POST',
+      endpoint: `/api/schedules/${id}/run`,
+      analysis: '立即執行一次任務（無視排程時間），使用目前 params 設定。回應為 { ok: true, task_id }。',
+      call: () => $fetch(`/api/schedules/${id}/run`, { method: 'POST' }),
+    })
+  } catch (e: unknown) {
+    const err = e as { message?: string }
+    scheduleError.value = err.message ?? '執行失敗'
+  } finally {
+    scheduleRunning.value[id] = false
+  }
+}
+
+function scheduleDraftDirty(entry: ScheduleEntry): boolean {
+  const d = scheduleDrafts.value[entry.id]
+  const s = entry.schedule
+  if (!d) return false
+  let origDays = 1
+  if (entry.has_params) {
+    try { origDays = (JSON.parse(s.params) as { days?: number }).days ?? 1 } catch {}
+  }
+  return d.enabled !== s.enabled
+    || d.type !== s.type
+    || d.hour !== s.hour
+    || d.minute !== s.minute
+    || d.weekday !== s.weekday
+    || (entry.has_params && d.days !== origDays)
+}
+
+function fmtRunTime(t: string | null): string {
+  if (!t) return '—'
+  try {
+    return new Date(t).toLocaleString('zh-TW', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    })
+  } catch { return t }
+}
+
 // ── 初始化 ────────────────────────────────────────────────────
 onMounted(() => {
   fetchSettings()
   fetchDbTables()
+  fetchSchedules()
 })
 </script>
 
@@ -371,6 +539,20 @@ onMounted(() => {
               <path d="M2 8v4c0 1.1 2.69 2 6 2s6-.9 6-2V8" stroke="currentColor" stroke-width="1.4"/>
             </svg>
             資料庫檢視
+          </button>
+          <button
+            class="nav-item"
+            :class="{ active: activeSection === 'schedule' }"
+            @click="activeSection = 'schedule'"
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="2" y="3" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M5 1v3M11 1v3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              <path d="M2 7h12" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M5 10.5h2M5 12.5h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              <circle cx="11.5" cy="11.5" r="2" fill="currentColor" opacity="0.85"/>
+            </svg>
+            排程管理
           </button>
         </nav>
 
@@ -828,6 +1010,175 @@ onMounted(() => {
                   </div>
                 </div>
               </template>
+            </div>
+          </div>
+        </section>
+
+        <!-- ════ 排程管理 ════ -->
+        <section v-else-if="activeSection === 'schedule'" class="section-wrap">
+          <div class="section-header">
+            <div>
+              <h1 class="section-title">排程管理</h1>
+              <p class="section-desc">設定各任務的自動執行時間，或立即手動觸發</p>
+            </div>
+            <button class="btn-secondary" :disabled="scheduleLoading" @click="fetchSchedules">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" :class="{ spin: scheduleLoading }">
+                <path d="M13.65 2.35A8 8 0 1 0 14.9 8.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                <path d="M14.5 2v4h-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              重新整理
+            </button>
+          </div>
+
+          <div v-if="scheduleError" class="error-banner">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 1L1 14h14L8 1Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 7v3M8 12v.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            {{ scheduleError }}
+          </div>
+
+          <div v-if="scheduleLoading" class="sched-loading">
+            <span class="spin-icon">◌</span> 載入中…
+          </div>
+
+          <div v-else-if="schedules.length === 0" class="empty-state">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none"><rect x="4" y="6" width="28" height="26" rx="4" stroke="currentColor" stroke-width="1.6"/><path d="M11 2v6M25 2v6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4 16h28" stroke="currentColor" stroke-width="1.6"/></svg>
+            <p>無排程資料</p>
+          </div>
+
+          <div v-else class="sched-grid">
+            <div
+              v-for="entry in schedules"
+              :key="entry.id"
+              class="sched-card"
+              :class="{ 'sched-card--enabled': scheduleDrafts[entry.id]?.enabled }"
+            >
+              <!-- 卡片 Header -->
+              <div class="sched-card-header">
+                <div class="sched-task-info">
+                  <span class="sched-task-label">{{ entry.label }}</span>
+                  <span class="sched-task-id">{{ entry.id }}</span>
+                </div>
+                <div class="sched-header-actions">
+                  <span v-if="scheduleSaved[entry.id]" class="sched-saved-badge">✓ 已儲存</span>
+                  <!-- 啟用 Toggle -->
+                  <label class="sched-toggle-label">
+                    <div
+                      class="toggle"
+                      :class="{ on: scheduleDrafts[entry.id]?.enabled }"
+                      @click="scheduleDrafts[entry.id] && (scheduleDrafts[entry.id].enabled = !scheduleDrafts[entry.id].enabled)"
+                    >
+                      <div class="toggle-thumb" />
+                    </div>
+                    <span>{{ scheduleDrafts[entry.id]?.enabled ? '已啟用' : '停用' }}</span>
+                  </label>
+                </div>
+              </div>
+
+              <p class="sched-task-desc">{{ entry.description }}</p>
+
+              <!-- 排程設定（只有啟用才顯示） -->
+              <template v-if="scheduleDrafts[entry.id]?.enabled">
+                <div class="sched-divider" />
+
+                <!-- 排程類型 -->
+                <div class="sched-field">
+                  <label class="sched-field-label">排程類型</label>
+                  <div class="sched-type-group">
+                    <button
+                      v-for="t in ['manual', 'daily', 'weekly'] as const"
+                      :key="t"
+                      class="sched-type-btn"
+                      :class="{ active: scheduleDrafts[entry.id]?.type === t }"
+                      @click="scheduleDrafts[entry.id] && (scheduleDrafts[entry.id].type = t)"
+                    >
+                      {{ t === 'manual' ? '手動' : t === 'daily' ? '每日' : '每週' }}
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 時間（daily / weekly） -->
+                <div v-if="scheduleDrafts[entry.id]?.type !== 'manual'" class="sched-field sched-time-row">
+                  <label class="sched-field-label">執行時間</label>
+                  <div class="sched-time-inputs">
+                    <input
+                      v-model.number="scheduleDrafts[entry.id].hour"
+                      type="number" min="0" max="23"
+                      class="sched-num-input"
+                      placeholder="HH"
+                    />
+                    <span class="sched-colon">:</span>
+                    <input
+                      v-model.number="scheduleDrafts[entry.id].minute"
+                      type="number" min="0" max="59"
+                      class="sched-num-input"
+                      placeholder="MM"
+                    />
+                    <span class="sched-time-hint">（台北時間）</span>
+                  </div>
+                </div>
+
+                <!-- 星期（weekly） -->
+                <div v-if="scheduleDrafts[entry.id]?.type === 'weekly'" class="sched-field">
+                  <label class="sched-field-label">執行星期</label>
+                  <div class="sched-weekday-group">
+                    <button
+                      v-for="(name, idx) in weekdayNames"
+                      :key="idx"
+                      class="sched-weekday-btn"
+                      :class="{ active: scheduleDrafts[entry.id]?.weekday === idx }"
+                      @click="scheduleDrafts[entry.id] && (scheduleDrafts[entry.id].weekday = idx)"
+                    >{{ name }}</button>
+                  </div>
+                </div>
+
+                <!-- 天數參數（major_chips） -->
+                <div v-if="entry.has_params" class="sched-field">
+                  <label class="sched-field-label">天數（days）</label>
+                  <div class="sched-time-inputs">
+                    <input
+                      v-model.number="scheduleDrafts[entry.id].days"
+                      type="number" min="1" max="365"
+                      class="sched-num-input sched-num-input--wide"
+                      placeholder="1"
+                    />
+                    <span class="sched-time-hint">天</span>
+                  </div>
+                </div>
+              </template>
+
+              <!-- 執行資訊 -->
+              <div class="sched-run-info">
+                <div class="sched-run-item">
+                  <span class="sched-run-label">上次執行</span>
+                  <span class="sched-run-val">{{ fmtRunTime(entry.schedule.last_run_at) }}</span>
+                </div>
+                <div class="sched-run-item">
+                  <span class="sched-run-label">下次執行</span>
+                  <span class="sched-run-val" :class="{ 'sched-run-upcoming': !!entry.schedule.next_run_at }">
+                    {{ fmtRunTime(entry.schedule.next_run_at) }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- 操作按鈕 -->
+              <div class="sched-card-footer">
+                <button
+                  class="btn-secondary btn-sm"
+                  :disabled="scheduleRunning[entry.id]"
+                  @click="runNow(entry)"
+                >
+                  <svg v-if="scheduleRunning[entry.id]" width="12" height="12" viewBox="0 0 16 16" fill="none" class="spin"><path d="M13.65 2.35A8 8 0 1 0 14.9 8.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                  <svg v-else width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M5 3l8 5-8 5V3Z" fill="currentColor"/></svg>
+                  {{ scheduleRunning[entry.id] ? '執行中…' : '立即執行' }}
+                </button>
+                <button
+                  class="btn-primary"
+                  :class="{ dirty: scheduleDraftDirty(entry) }"
+                  :disabled="scheduleSaving[entry.id] || !scheduleDraftDirty(entry)"
+                  @click="saveSchedule(entry)"
+                >
+                  {{ scheduleSaving[entry.id] ? '儲存中…' : '儲存設定' }}
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -1324,4 +1675,97 @@ onMounted(() => {
 .page-btn:hover:not(:disabled) { background: var(--s3); border-color: var(--line2); color: var(--t1); }
 .page-btn:disabled { opacity: 0.35; cursor: default; }
 .page-info { font-size: 12px; color: var(--t3); min-width: 60px; text-align: center; }
+
+/* ═══════════════════════════════════════
+   Schedule Section
+═══════════════════════════════════════ */
+.sched-loading { padding: 20px; color: var(--t3); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+
+.sched-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.sched-card {
+  background: var(--s1);
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 20px;
+  display: flex; flex-direction: column; gap: 12px;
+  transition: border-color 0.15s;
+}
+.sched-card--enabled { border-color: color-mix(in oklch, var(--blue) 30%, var(--line)); }
+
+.sched-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.sched-task-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sched-task-label { font-size: 14px; font-weight: 700; color: var(--t1); }
+.sched-task-id { font-size: 10px; font-family: var(--mono); color: var(--t3); }
+.sched-task-desc { font-size: 12px; color: var(--t3); line-height: 1.5; margin-top: -4px; }
+
+.sched-header-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.sched-toggle-label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--t2); cursor: pointer; }
+.sched-saved-badge { font-size: 11px; color: var(--dn); font-weight: 600; }
+
+.sched-divider { height: 1px; background: var(--line); margin: 0 -20px; }
+
+.sched-field { display: flex; flex-direction: column; gap: 7px; }
+.sched-field-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--t3);
+}
+
+.sched-type-group { display: flex; gap: 4px; }
+.sched-type-btn {
+  flex: 1; padding: 6px 0; border-radius: 7px;
+  border: 1.5px solid var(--line);
+  background: var(--s2); color: var(--t2);
+  font-family: var(--font); font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: all 0.13s;
+}
+.sched-type-btn.active {
+  background: color-mix(in oklch, var(--blue) 12%, var(--s2));
+  border-color: var(--blue); color: var(--blue);
+}
+
+.sched-time-row .sched-time-inputs { display: flex; align-items: center; gap: 6px; }
+.sched-time-inputs { display: flex; align-items: center; gap: 6px; }
+.sched-num-input {
+  width: 52px; padding: 6px 8px;
+  background: var(--s2); border: 1px solid var(--line); border-radius: 7px;
+  color: var(--t1); font-family: var(--mono); font-size: 13px;
+  text-align: center; outline: none;
+  transition: border-color 0.13s;
+}
+.sched-num-input:focus { border-color: var(--blue); }
+.sched-num-input--wide { width: 72px; }
+.sched-colon { font-size: 16px; font-weight: 600; color: var(--t2); }
+.sched-time-hint { font-size: 11px; color: var(--t3); }
+
+.sched-weekday-group { display: flex; gap: 4px; flex-wrap: wrap; }
+.sched-weekday-btn {
+  padding: 5px 9px; border-radius: 6px;
+  border: 1.5px solid var(--line);
+  background: var(--s2); color: var(--t2);
+  font-family: var(--font); font-size: 11px; font-weight: 500;
+  cursor: pointer; transition: all 0.13s;
+}
+.sched-weekday-btn.active {
+  background: color-mix(in oklch, var(--gold) 12%, var(--s2));
+  border-color: var(--gold); color: var(--gold);
+}
+
+.sched-run-info {
+  display: flex; gap: 16px;
+  padding: 10px 12px;
+  background: var(--s2); border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.sched-run-item { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+.sched-run-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--t3); }
+.sched-run-val { font-size: 12px; font-family: var(--mono); color: var(--t2); }
+.sched-run-upcoming { color: var(--blue); }
+
+.sched-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 4px; }
 </style>

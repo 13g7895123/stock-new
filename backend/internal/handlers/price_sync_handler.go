@@ -125,3 +125,14 @@ func (h *PriceSyncHandler) TestSingle(c *gin.Context) {
 		"records": n,
 	})
 }
+
+// TriggerPriceCron 由排程器呼叫，觸發全量日K爬取（非 HTTP）
+func TriggerPriceCron(db *gorm.DB) error {
+	runner := getPriceSyncRunner(db)
+	_, err := runner.Trigger()
+	if err == pricesrunner.ErrJobRunning {
+		log.Printf("[price-cron] 已有作業執行中，略過本次排程")
+		return nil
+	}
+	return err
+}

@@ -334,3 +334,33 @@ func (h *ScraperHandler) RefreshStockSSE(c *gin.Context) {
 		Synced:   len(all),
 	})
 }
+
+// SyncStocksCron 由排程器呼叫，同步股票清單（非 SSE，不走 HTTP）
+func SyncStocksCron(db *gorm.DB) error {
+	listed, err := scraper.FetchListedStocks()
+	if err != nil {
+		return fmt.Errorf("FetchListedStocks: %w", err)
+	}
+	otc, err := scraper.FetchOtcStocks()
+	if err != nil {
+		return fmt.Errorf("FetchOtcStocks: %w", err)
+	}
+	all := append(listed, otc...)
+	stocks := make([]models.Stock, 0, len(all))
+	for i, s := range all {
+		market := "TPEX"
+		if i < len(listed) {
+			market = "TWSE"
+		}
+		stocks = append(stocks, models.Stock{
+			Symbol:   s.Symbol,
+			Name:     s.Name,
+			Industry: s.Industry,
+			Market:   market,
+		})
+	}
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "symbol"}},
+		DoUpdates: clause.AssignmentColumns([]string{"name", "industry", "market", "updated_at"}),
+	}).Create(&stocks).Error
+}
