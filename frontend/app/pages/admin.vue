@@ -1036,64 +1036,68 @@ onMounted(() => {
                 </div>
 
                 <!-- ── Schema 結構 ── -->
-                <div v-if="dbActiveTab === 'schema'" class="db-table-wrap">
-                  <div v-if="filteredColumns.length === 0" class="db-no-match">無符合欄位</div>
-                  <table v-else class="data-table">
-                    <thead>
-                      <tr>
-                        <th class="th-rownum">#</th>
-                        <th>欄位名稱</th>
-                        <th>資料型別</th>
-                        <th>可 NULL</th>
-                        <th>預設值</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="(col, idx) in filteredColumns" :key="col.name">
-                        <td class="td-rownum">{{ idx + 1 }}</td>
-                        <td class="col-name">{{ col.name }}</td>
-                        <td>
-                          <span class="type-badge" :class="typeClass(col.type)">{{ col.type }}</span>
-                        </td>
-                        <td>
-                          <span v-if="col.nullable === 'YES'" class="nullable-yes">可空</span>
-                          <span v-else class="nullable-no">必填</span>
-                        </td>
-                        <td class="col-default">{{ col.default || '—' }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                <div v-if="dbActiveTab === 'schema'" class="db-data-area">
+                  <div class="db-table-wrap">
+                    <div v-if="filteredColumns.length === 0" class="db-no-match">無符合欄位</div>
+                    <table v-else class="data-table">
+                      <thead>
+                        <tr>
+                          <th class="th-rownum">#</th>
+                          <th>欄位名稱</th>
+                          <th>資料型別</th>
+                          <th>可 NULL</th>
+                          <th>預設值</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(col, idx) in filteredColumns" :key="col.name">
+                          <td class="td-rownum">{{ idx + 1 }}</td>
+                          <td class="col-name">{{ col.name }}</td>
+                          <td>
+                            <span class="type-badge" :class="typeClass(col.type)">{{ col.type }}</span>
+                          </td>
+                          <td>
+                            <span v-if="col.nullable === 'YES'" class="nullable-yes">可空</span>
+                            <span v-else class="nullable-no">必填</span>
+                          </td>
+                          <td class="col-default">{{ col.default || '—' }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 <!-- ── 資料瀏覽 ── -->
-                <div v-else class="db-table-wrap">
-                  <div v-if="dbDataLoading" class="db-loading-overlay">
-                    <span class="spin-icon">◌</span> 載入中…
+                <div v-else class="db-data-area">
+                  <div class="db-table-wrap">
+                    <div v-if="dbDataLoading" class="db-loading-overlay">
+                      <span class="spin-icon">◌</span> 載入中…
+                    </div>
+                    <table v-else-if="tableData && dataColumns.length" class="data-table">
+                      <thead>
+                        <tr>
+                          <th class="th-rownum">#</th>
+                          <th v-for="col in dataColumns" :key="col">{{ col }}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(row, ri) in tableData.data" :key="ri">
+                          <td class="td-rownum">{{ (dbPage - 1) * 50 + ri + 1 }}</td>
+                          <td
+                            v-for="col in dataColumns"
+                            :key="col"
+                            :class="{ 'null-cell': isNull(row[col]) }"
+                          >
+                            <span v-if="isNull(row[col])" class="null-pill">NULL</span>
+                            <span v-else>{{ dbDisplayVal(row[col]) }}</span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div v-else-if="!dbDataLoading" class="db-no-match">此資料表無資料</div>
                   </div>
-                  <table v-else-if="tableData && dataColumns.length" class="data-table">
-                    <thead>
-                      <tr>
-                        <th class="th-rownum">#</th>
-                        <th v-for="col in dataColumns" :key="col">{{ col }}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="(row, ri) in tableData.data" :key="ri">
-                        <td class="td-rownum">{{ (dbPage - 1) * 50 + ri + 1 }}</td>
-                        <td
-                          v-for="col in dataColumns"
-                          :key="col"
-                          :class="{ 'null-cell': isNull(row[col]) }"
-                        >
-                          <span v-if="isNull(row[col])" class="null-pill">NULL</span>
-                          <span v-else>{{ dbDisplayVal(row[col]) }}</span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <div v-else-if="!dbDataLoading" class="db-no-match">此資料表無資料</div>
 
-                  <!-- 分頁列 -->
+                  <!-- 分頁列：固定在底部 -->
                   <div v-if="tableData && tableData.pages > 1" class="db-pagination">
                     <button class="page-btn" :disabled="dbPage <= 1" @click="goDbPage(dbPage - 1)">
                       <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1312,7 +1316,8 @@ onMounted(() => {
   --radius: 10px;
   --font:  'DM Sans', system-ui, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
   --mono:  'Fira Code', 'JetBrains Mono', ui-monospace, monospace;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background: var(--bg);
   color: var(--t1);
   font-family: var(--font);
@@ -1344,8 +1349,9 @@ onMounted(() => {
 
 /* ── Header ─────────────────────────────────────────────────── */
 .header {
-  position: sticky; top: 0; z-index: 50;
-  background: color-mix(in oklch, var(--s1) 85%, transparent);
+  flex-shrink: 0;
+  z-index: 50;
+  background: color-mix(in oklch, var(--s1) 92%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--line);
@@ -1379,7 +1385,7 @@ onMounted(() => {
 /* ── Admin Layout ────────────────────────────────────────────── */
 .admin-layout {
   display: flex; flex: 1;
-  height: calc(100vh - 52px); overflow: hidden;
+  min-height: 0; overflow: hidden;
 }
 
 /* ── Admin Nav (left sidebar) ────────────────────────────────── */
@@ -1421,9 +1427,13 @@ onMounted(() => {
 .nav-separator { height: 1px; background: var(--line); margin: 12px 16px; }
 
 /* ── Admin Main ──────────────────────────────────────────────── */
-.admin-main { flex: 1; overflow-y: auto; }
+.admin-main { flex: 1; min-width: 0; overflow-y: auto; }
 .section-wrap { padding: 24px 28px; min-height: 100%; display: flex; flex-direction: column; gap: 20px; }
-.section-wrap--db { padding: 0; gap: 0; }
+/* DB section：滿版鎖定，scroll 只發生在右側內容區 */
+.section-wrap--db {
+  height: 100%; padding: 0; gap: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
 .section-header {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
   flex-shrink: 0;
@@ -1723,9 +1733,6 @@ onMounted(() => {
    DB Viewer Section
 ═══════════════════════════════════════ */
 
-/* 整體 Section 布局 */
-.section-wrap--db { overflow: hidden; }
-
 /* DB 標題列 */
 .db-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -1735,8 +1742,8 @@ onMounted(() => {
 .db-header-left { display: flex; align-items: center; gap: 12px; }
 .db-header-icon { color: var(--t3); flex-shrink: 0; }
 
-/* 主布局 */
-.db-layout { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+/* 主布局：填滿剩餘高度，內部 overflow: hidden 讓子元素各自控制捲動 */
+.db-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 
 /* 側邊欄 ─ 資料表清單 */
 .db-sidebar {
@@ -1848,7 +1855,8 @@ onMounted(() => {
 .db-tab.active { background: var(--s3); color: var(--t1); }
 
 /* 資料表區域 */
-.db-table-wrap { flex: 1; overflow: auto; position: relative; }
+.db-data-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+.db-table-wrap { flex: 1; overflow: auto; position: relative; min-height: 0; }
 .db-loading-overlay {
   padding: 24px; color: var(--t3); font-size: 12px;
   display: flex; align-items: center; gap: 8px;
