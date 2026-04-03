@@ -133,6 +133,9 @@ func (r *Runner) runJob(symbols []string) {
 		return
 	}
 
+	WriteLog(r.db, jobPtr(job.ID), "info", "job_start", "",
+		fmt.Sprintf("開始爬取，共 %d 支股票", len(symbols)))
+
 	jobs := make(chan string)
 	results := make(chan scrapeResult, len(symbols))
 	workerCount := minInt(r.concurrency, len(symbols))
@@ -208,6 +211,8 @@ func (r *Runner) runJob(symbols []string) {
 		log.Printf("[chips] finalize job failed: %v", err)
 	}
 
+	WriteLog(r.db, jobPtr(job.ID), "info", "job_end", "",
+		fmt.Sprintf("完成 status=%s success=%d fail=%d", status, success, fail))
 	log.Printf("[chips] job %d finished status=%s success=%d fail=%d", job.ID, status, success, fail)
 }
 
@@ -222,26 +227,30 @@ func (r *Runner) worker(jobID uint, jobs <-chan string, results chan<- scrapeRes
 }
 
 func (r *Runner) scrapeSymbol(jobID uint, symbol string) (bool, error) {
-	html, err := r.fetchPage(symbol)
+	html, err := r.fetchPage(jobID, symbol)
 	if err != nil {
+		WriteLog(r.db, jobPtr(jobID), "error", "fetch_fail", symbol, err.Error())
 		return false, err
 	}
 
 	dataDate, distributions, err := parseLatestSnapshot(html)
 	if err != nil {
+		WriteLog(r.db, jobPtr(jobID), "error", "parse_fail", symbol, err.Error())
 		return false, err
 	}
 	if len(distributions) == 0 {
+		WriteLog(r.db, jobPtr(jobID), "error", "parse_fail", symbol, "無可用分布資料（distributions 為空）")
 		return false, errors.New("無可用分布資料")
 	}
 
 	if err := r.saveSnapshot(jobID, symbol, dataDate, distributions); err != nil {
+		WriteLog(r.db, jobPtr(jobID), "error", "save_fail", symbol, err.Error())
 		return false, err
 	}
 	return true, nil
 }
 
-func (r *Runner) fetchPage(symbol string) (string, error) {
+func (r *Runner) fetchPage(jobID uint, symbol string) (string, error) {
 	const maxRetries = 3
 	delays := []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second}
 
@@ -289,6 +298,8 @@ func (r *Runner) fetchPage(symbol string) (string, error) {
 		if status == http.StatusForbidden || status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
 			lastErr = fmt.Errorf("unexpected status: %d", status)
 			log.Printf("[chips][%s] HTTP %d，第 %d 次重試", symbol, status, attempt+1)
+			WriteLog(r.db, jobPtr(jobID), "warn", "fetch_retry", symbol,
+				fmt.Sprintf("HTTP %d，第 %d 次重試", status, attempt+1))
 			continue
 		}
 

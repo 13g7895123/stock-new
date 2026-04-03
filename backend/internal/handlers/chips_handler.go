@@ -8,11 +8,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	chipsrunner "stock-backend/internal/chips"
+	chips "stock-backend/internal/chips"
 	"stock-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -21,18 +22,18 @@ import (
 
 type ChipsHandler struct {
 	db         *gorm.DB
-	runner     *chipsrunner.Runner
+	runner     *chips.Runner
 	scraperURL string // Python scraper 服務 URL
 }
 
 var (
 	chipsRunnerOnce sync.Once
-	chipsRunner     *chipsrunner.Runner
+	chipsRunner     *chips.Runner
 )
 
-func getChipsRunner(db *gorm.DB) *chipsrunner.Runner {
+func getChipsRunner(db *gorm.DB) *chips.Runner {
 	chipsRunnerOnce.Do(func() {
-		chipsRunner = chipsrunner.NewRunner(db)
+		chipsRunner = chips.NewRunner(db)
 		if err := chipsRunner.RecoverStaleJobs(); err != nil {
 			log.Printf("[chips] recover stale jobs failed: %v", err)
 		}
@@ -66,17 +67,21 @@ func (h *ChipsHandler) callPythonScraper(method string, symbol string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 10 * time.Second}
+	chips.WriteLog(h.db, nil, "info", "python_scraper", "",
+		fmt.Sprintf("呼叫 Python scraper: url=%s method=%s symbol=%s", h.scraperURL+"/trigger", method, symbol))
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("python scraper 無法連線: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusConflict {
-		return chipsrunner.ErrJobRunning
+		return chips.ErrJobRunning
 	}
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("python scraper 回傳 %d: %s", resp.StatusCode, string(b))
+		errMsg := fmt.Sprintf("python scraper 回傳 %d: %s", resp.StatusCode, string(b))
+		chips.WriteLog(h.db, nil, "error", "python_scraper", symbol, errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 	return nil
 }
@@ -97,12 +102,22 @@ func (h *ChipsHandler) triggerByScheme(scheme string, symbol string) (int, error
 func (h *ChipsHandler) dispatchTrigger(symbol string) (scheme string, total int, err error) {
 	cfg := GetFeatureConfig(h.db, "chips_pyramid")
 	scheme = cfg.Primary
+	chips.WriteLog(h.db, nil, "info", "dispatch", symbol,
+		fmt.Sprintf("使用方案=%s fallback_enabled=%v fallback=%s", scheme, cfg.FallbackEnabled, cfg.Fallback))
 	total, err = h.triggerByScheme(scheme, symbol)
-	if err != nil && err != chipsrunner.ErrJobRunning && err != chipsrunner.ErrNoSymbols {
+	if err != nil && err != chips.ErrJobRunning && err != chips.ErrNoSymbols {
+		chips.WriteLog(h.db, nil, "error", "dispatch", symbol,
+			fmt.Sprintf("主方案 %s 失敗: %v", scheme, err))
 		if cfg.FallbackEnabled && cfg.Fallback != "" && cfg.Fallback != scheme {
 			log.Printf("[chips] 主方案 %s 失敗（%v），嘗試備案 %s", scheme, err, cfg.Fallback)
 			scheme = cfg.Fallback
+			chips.WriteLog(h.db, nil, "warn", "dispatch", symbol,
+				fmt.Sprintf("啟用備案方案=%s", scheme))
 			total, err = h.triggerByScheme(scheme, symbol)
+			if err != nil {
+				chips.WriteLog(h.db, nil, "error", "dispatch", symbol,
+					fmt.Sprintf("備案方案 %s 也失敗: %v", scheme, err))
+			}
 		}
 	}
 	return
@@ -145,11 +160,11 @@ func (h *ChipsHandler) Status(c *gin.Context) {
 func (h *ChipsHandler) Trigger(c *gin.Context) {
 	scheme, total, err := h.dispatchTrigger("")
 	if err != nil {
-		if err == chipsrunner.ErrJobRunning {
+		if err == chips.ErrJobRunning {
 			c.JSON(http.StatusConflict, gin.H{"error": "scraper already running"})
 			return
 		}
-		if err == chipsrunner.ErrNoSymbols {
+		if err == chips.ErrNoSymbols {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -178,7 +193,7 @@ func (h *ChipsHandler) TriggerSingle(c *gin.Context) {
 
 	scheme, total, err := h.dispatchTrigger(symbol)
 	if err != nil {
-		if err == chipsrunner.ErrJobRunning {
+		if err == chips.ErrJobRunning {
 			c.JSON(http.StatusConflict, gin.H{"error": "已有爬取任務執行中"})
 			return
 		}
@@ -193,7 +208,7 @@ func TriggerCron(db *gorm.DB) {
 	runner := getChipsRunner(db)
 	total, err := runner.Trigger("")
 	if err != nil {
-		if err == chipsrunner.ErrJobRunning {
+		if err == chips.ErrJobRunning {
 			log.Printf("[chips-cron] 已有籌碼作業執行中，略過本次排程")
 			return
 		}
@@ -223,4 +238,41 @@ func nextSunday() time.Time {
 	}
 	next := now.AddDate(0, 0, daysUntilSun)
 	return time.Date(next.Year(), next.Month(), next.Day(), 10, 0, 0, 0, loc)
+}
+
+// GetLogs GET /api/chips/logs
+// Query params:
+//   - limit  int     預設 100，最多 500
+//   - level  string  過濾：info | warn | error
+//   - job_id uint    對应 job_id
+//   - symbol string  對应股票代號
+func (h *ChipsHandler) GetLogs(c *gin.Context) {
+	limit := 100
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if n > 500 {
+				n = 500
+			}
+			limit = n
+		}
+	}
+
+	query := h.db.Model(&models.ChipsRunLog{}).Order("id DESC").Limit(limit)
+
+	if level := c.Query("level"); level != "" {
+		query = query.Where("level = ?", level)
+	}
+	if jobID := c.Query("job_id"); jobID != "" {
+		query = query.Where("job_id = ?", jobID)
+	}
+	if symbol := c.Query("symbol"); symbol != "" {
+		query = query.Where("symbol = ?", symbol)
+	}
+
+	var logs []models.ChipsRunLog
+	if err := query.Find(&logs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"logs": logs, "count": len(logs)})
 }

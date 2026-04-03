@@ -30,6 +30,7 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 		&models.ChipsSyncJob{},
 		&models.ChipsHolderSnapshot{},
 		&models.ChipsHolderDistribution{},
+		&models.ChipsRunLog{},
 		&models.PriceSyncJob{},
 		&models.AppSetting{},
 		&models.MajorSyncJob{},
