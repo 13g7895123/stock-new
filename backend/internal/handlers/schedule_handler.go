@@ -70,13 +70,14 @@ func (h *ScheduleHandler) loadOrDefault(taskID string) models.TaskSchedule {
 	var s models.TaskSchedule
 	if err := h.db.First(&s, "task_id = ?", taskID).Error; err != nil {
 		return models.TaskSchedule{
-			TaskID:  taskID,
-			Enabled: false,
-			Type:    "manual",
-			Hour:    10,
-			Minute:  0,
-			Weekday: 0,
-			Params:  "{}",
+			TaskID:          taskID,
+			Enabled:         false,
+			Type:            "manual",
+			Hour:            10,
+			Minute:          0,
+			Weekday:         0,
+			ExcludeWeekends: false,
+			Params:          "{}",
 		}
 	}
 	return s
@@ -112,12 +113,13 @@ func (h *ScheduleHandler) Update(c *gin.Context) {
 	}
 
 	var body struct {
-		Enabled bool   `json:"enabled"`
-		Type    string `json:"type"` // manual|daily|weekly
-		Hour    int    `json:"hour"`
-		Minute  int    `json:"minute"`
-		Weekday int    `json:"weekday"`
-		Params  string `json:"params"`
+		Enabled         bool   `json:"enabled"`
+		Type            string `json:"type"` // manual|daily|weekly
+		Hour            int    `json:"hour"`
+		Minute          int    `json:"minute"`
+		Weekday         int    `json:"weekday"`
+		ExcludeWeekends bool   `json:"exclude_weekends"`
+		Params          string `json:"params"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "格式錯誤: " + err.Error()})
@@ -142,23 +144,24 @@ func (h *ScheduleHandler) Update(c *gin.Context) {
 	}
 
 	now := time.Now()
-	nextRun := calcNextRun(body.Type, body.Hour, body.Minute, body.Weekday, now)
+	nextRun := calcNextRun(body.Type, body.Hour, body.Minute, body.Weekday, body.ExcludeWeekends, nil, now)
 
 	s := models.TaskSchedule{
-		TaskID:    taskID,
-		Enabled:   body.Enabled,
-		Type:      body.Type,
-		Hour:      body.Hour,
-		Minute:    body.Minute,
-		Weekday:   body.Weekday,
-		Params:    body.Params,
-		NextRunAt: nextRun,
-		UpdatedAt: now,
+		TaskID:          taskID,
+		Enabled:         body.Enabled,
+		Type:            body.Type,
+		Hour:            body.Hour,
+		Minute:          body.Minute,
+		Weekday:         body.Weekday,
+		ExcludeWeekends: body.ExcludeWeekends,
+		Params:          body.Params,
+		NextRunAt:       nextRun,
+		UpdatedAt:       now,
 	}
 
 	if err := h.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "task_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"enabled", "type", "hour", "minute", "weekday", "params", "next_run_at", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"enabled", "type", "hour", "minute", "weekday", "exclude_weekends", "params", "next_run_at", "updated_at"}),
 	}).Create(&s).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -179,6 +182,74 @@ func (h *ScheduleHandler) ManualRun(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "task_id": taskID})
+}
+
+// ─── 假日管理 ─────────────────────────────────────────────────────────────────
+// 假日清單以 app_settings.trading_holidays 儲存，格式為 JSON 字串陣列：
+// ["2026-01-01", "2026-02-28"]
+
+const holidaysKey = "trading_holidays"
+
+// GetHolidays GET /api/schedules/holidays
+func (h *ScheduleHandler) GetHolidays(c *gin.Context) {
+	dates := loadHolidaysFromDB(h.db)
+	c.JSON(http.StatusOK, gin.H{"dates": dates})
+}
+
+// SetHolidays PUT /api/schedules/holidays
+func (h *ScheduleHandler) SetHolidays(c *gin.Context) {
+	var body struct {
+		Dates []string `json:"dates"` // ["YYYY-MM-DD", ...]
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// 驗證格式
+	for _, d := range body.Dates {
+		if _, err := time.Parse("2006-01-02", d); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "日期格式錯誤（需為 YYYY-MM-DD）: " + d})
+			return
+		}
+	}
+	// 去除重複、排序
+	seen := map[string]bool{}
+	uniq := make([]string, 0, len(body.Dates))
+	for _, d := range body.Dates {
+		if !seen[d] {
+			seen[d] = true
+			uniq = append(uniq, d)
+		}
+	}
+	b, _ := json.Marshal(uniq)
+	setting := models.AppSetting{
+		Key:       holidaysKey,
+		Value:     string(b),
+		UpdatedAt: time.Now(),
+	}
+	h.db.Save(&setting)
+	c.JSON(http.StatusOK, gin.H{"dates": uniq})
+}
+
+// loadHolidaysFromDB 從 app_settings 讀取假日清單，回傳 map["YYYY-MM-DD"]true
+func loadHolidaysFromDB(db *gorm.DB) []string {
+	var s models.AppSetting
+	if err := db.First(&s, "key = ?", holidaysKey).Error; err != nil {
+		return []string{}
+	}
+	var dates []string
+	if err := json.Unmarshal([]byte(s.Value), &dates); err != nil {
+		return []string{}
+	}
+	return dates
+}
+
+func holidaysToSet(dates []string) map[string]bool {
+	m := make(map[string]bool, len(dates))
+	for _, d := range dates {
+		m[d] = true
+	}
+	return m
 }
 
 // ─── 任務派送 ──────────────────────────────────────────────────────────────────
@@ -220,6 +291,9 @@ func RunScheduler(db *gorm.DB) {
 		time.Sleep(time.Until(nextMinute))
 
 		now = time.Now().In(loc)
+		// 每分鐘重新讀取假日清單（低頻讀取，影響可忽略）
+		holidays := holidaysToSet(loadHolidaysFromDB(db))
+
 		var schedules []models.TaskSchedule
 		if err := db.Find(&schedules).Error; err != nil {
 			log.Printf("[scheduler] 讀取排程失敗: %v", err)
@@ -230,7 +304,7 @@ func RunScheduler(db *gorm.DB) {
 			if !s.Enabled || s.Type == "manual" {
 				continue
 			}
-			if !shouldFire(s, now) {
+			if !shouldFire(s, now, holidays) {
 				continue
 			}
 			// 防止同一分鐘重複觸發
@@ -243,30 +317,42 @@ func RunScheduler(db *gorm.DB) {
 			log.Printf("[scheduler] 觸發任務 %s（type=%s %02d:%02d weekday=%d）",
 				s.TaskID, s.Type, s.Hour, s.Minute, s.Weekday)
 
-			go func(taskID, params string) {
+			go func(taskID, params string, sched models.TaskSchedule) {
 				if err := dispatchTask(db, taskID, params); err != nil {
 					log.Printf("[scheduler] 任務 %s 執行失敗: %v", taskID, err)
 				}
 				// 更新 last_run_at + next_run_at
 				n := time.Now()
-				nextRun := calcNextRun(s.Type, s.Hour, s.Minute, s.Weekday, n)
+				nextRun := calcNextRun(sched.Type, sched.Hour, sched.Minute, sched.Weekday, sched.ExcludeWeekends, nil, n)
 				db.Model(&models.TaskSchedule{}).
 					Where("task_id = ?", taskID).
 					Updates(map[string]any{
 						"last_run_at": n,
 						"next_run_at": nextRun,
 					})
-			}(s.TaskID, s.Params)
+			}(s.TaskID, s.Params, s)
 		}
 	}
 }
 
 // shouldFire 判斷排程是否應在 now 這個分鐘觸發
-func shouldFire(s models.TaskSchedule, now time.Time) bool {
+// holidays: set of "YYYY-MM-DD" strings representing non-trading days
+func shouldFire(s models.TaskSchedule, now time.Time, holidays map[string]bool) bool {
 	if now.Hour() != s.Hour || now.Minute() != s.Minute {
 		return false
 	}
+	// 排除假日（全局非交易日）
+	todayStr := now.Format("2006-01-02")
+	if holidays[todayStr] {
+		log.Printf("[scheduler] 任務 %s 跳過非交易日 %s", s.TaskID, todayStr)
+		return false
+	}
 	if s.Type == "daily" {
+		// 排除週末
+		if s.ExcludeWeekends && (now.Weekday() == time.Saturday || now.Weekday() == time.Sunday) {
+			log.Printf("[scheduler] 任務 %s 跳過週末 %s", s.TaskID, todayStr)
+			return false
+		}
 		return true
 	}
 	if s.Type == "weekly" {
@@ -276,7 +362,9 @@ func shouldFire(s models.TaskSchedule, now time.Time) bool {
 }
 
 // calcNextRun 計算下一次觸發時間（nil = 手動模式）
-func calcNextRun(schedType string, hour, minute, weekday int, from time.Time) *time.Time {
+// excludeWeekends: 每日模式下跳過週六日
+// holidays: "YYYY-MM-DD" set，nil 表示不套用
+func calcNextRun(schedType string, hour, minute, weekday int, excludeWeekends bool, holidays map[string]bool, from time.Time) *time.Time {
 	loc, _ := time.LoadLocation("Asia/Taipei")
 	t := from.In(loc)
 
@@ -284,25 +372,49 @@ func calcNextRun(schedType string, hour, minute, weekday int, from time.Time) *t
 		return nil
 	}
 
-	// 候選時間：今天的 hour:minute
-	candidate := time.Date(t.Year(), t.Month(), t.Day(), hour, minute, 0, 0, loc)
+	isExcluded := func(d time.Time) bool {
+		if holidays != nil && holidays[d.Format("2006-01-02")] {
+			return true
+		}
+		if excludeWeekends && (d.Weekday() == time.Saturday || d.Weekday() == time.Sunday) {
+			return true
+		}
+		return false
+	}
 
 	if schedType == "daily" {
-		// 如果今天的時間已過，則選明天
+		// 從今天的 hour:minute 開始往後找，最多 14 天
+		candidate := time.Date(t.Year(), t.Month(), t.Day(), hour, minute, 0, 0, loc)
 		if !candidate.After(t) {
 			candidate = candidate.Add(24 * time.Hour)
 		}
-		return &candidate
+		for i := 0; i < 14; i++ {
+			if !isExcluded(candidate) {
+				return &candidate
+			}
+			candidate = candidate.Add(24 * time.Hour)
+		}
+		return nil // 找不到（不太可能）
 	}
 
 	if schedType == "weekly" {
-		// 找到下一個符合星期的日期
+		// 找下一個符合星期且未被假日排除的日期（最多往後 4 週）
 		daysAhead := (weekday - int(t.Weekday()) + 7) % 7
-		if daysAhead == 0 && !candidate.After(t) {
+		if daysAhead == 0 {
 			daysAhead = 7
+			// 如果今天時間還沒到，可以是今天
+			candidate := time.Date(t.Year(), t.Month(), t.Day(), hour, minute, 0, 0, loc)
+			if candidate.After(t) && !isExcluded(candidate) {
+				return &candidate
+			}
 		}
-		candidate = candidate.AddDate(0, 0, daysAhead)
-		return &candidate
+		for i := 0; i < 4; i++ {
+			candidate := time.Date(t.Year(), t.Month(), t.Day()+daysAhead+i*7, hour, minute, 0, 0, loc)
+			if !isExcluded(candidate) {
+				return &candidate
+			}
+		}
+		return nil
 	}
 
 	return nil

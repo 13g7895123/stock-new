@@ -142,6 +142,8 @@ func Setup(db *gorm.DB) *gin.Engine {
 		scheduleHandler := handlers.NewScheduleHandler(db)
 		scheduleGroup := api.Group("/schedules")
 		{
+			scheduleGroup.GET("/holidays", scheduleHandler.GetHolidays)
+			scheduleGroup.PUT("/holidays", scheduleHandler.SetHolidays)
 			scheduleGroup.GET("", scheduleHandler.GetAll)
 			scheduleGroup.PUT("/:task_id", scheduleHandler.Update)
 			scheduleGroup.POST("/:task_id/run", scheduleHandler.ManualRun)

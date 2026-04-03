@@ -321,6 +321,7 @@ interface Schedule {
   hour: number
   minute: number
   weekday: number
+  exclude_weekends: boolean
   params: string
   last_run_at: string | null
   next_run_at: string | null
@@ -339,6 +340,7 @@ interface ScheduleDraft {
   hour: number
   minute: number
   weekday: number
+  exclude_weekends: boolean
   days: number
 }
 
@@ -362,6 +364,7 @@ function parseScheduleDraft(s: Schedule, hasParams: boolean): ScheduleDraft {
     hour: s.hour,
     minute: s.minute,
     weekday: s.weekday,
+    exclude_weekends: s.exclude_weekends ?? false,
     days,
   }
 }
@@ -403,6 +406,7 @@ async function saveSchedule(entry: ScheduleEntry) {
       hour: d.hour,
       minute: d.minute,
       weekday: d.weekday,
+      exclude_weekends: d.exclude_weekends,
       params: entry.has_params ? JSON.stringify({ days: d.days }) : '{}',
     }
     const updated = await logCall({
@@ -465,6 +469,7 @@ function scheduleDraftDirty(entry: ScheduleEntry): boolean {
     || d.hour !== s.hour
     || d.minute !== s.minute
     || d.weekday !== s.weekday
+    || d.exclude_weekends !== (s.exclude_weekends ?? false)
     || (entry.has_params && d.days !== origDays)
 }
 
@@ -478,11 +483,61 @@ function fmtRunTime(t: string | null): string {
   } catch { return t }
 }
 
+// ── 假日管理 ─────────────────────────────────────────────────
+const holidays = ref<string[]>([])
+const holidaysDraft = ref('')
+const holidaysLoading = ref(false)
+const holidaysSaving = ref(false)
+const holidaysSaved = ref(false)
+const holidaysError = ref('')
+
+async function fetchHolidays() {
+  holidaysLoading.value = true
+  holidaysError.value = ''
+  try {
+    const data = await $fetch<{ dates: string[] }>('/api/schedules/holidays')
+    holidays.value = data.dates ?? []
+    holidaysDraft.value = holidays.value.join('\n')
+  } catch (e: unknown) {
+    const err = e as { message?: string }
+    holidaysError.value = err.message ?? '載入失敗'
+  } finally {
+    holidaysLoading.value = false
+  }
+}
+
+async function saveHolidays() {
+  const raw = holidaysDraft.value
+  const dates = raw.split('\n')
+    .map(l => l.trim())
+    .filter(l => /^\d{4}-\d{2}-\d{2}$/.test(l))
+  holidaysSaving.value = true
+  holidaysSaved.value = false
+  holidaysError.value = ''
+  try {
+    const result = await $fetch<{ dates: string[] }>('/api/schedules/holidays', {
+      method: 'PUT',
+      body: JSON.stringify({ dates }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    holidays.value = result.dates ?? dates
+    holidaysDraft.value = holidays.value.join('\n')
+    holidaysSaved.value = true
+    setTimeout(() => { holidaysSaved.value = false }, 2000)
+  } catch (e: unknown) {
+    const err = e as { message?: string }
+    holidaysError.value = err.message ?? '儲存失敗'
+  } finally {
+    holidaysSaving.value = false
+  }
+}
+
 // ── 初始化 ────────────────────────────────────────────────────
 onMounted(() => {
   fetchSettings()
   fetchDbTables()
   fetchSchedules()
+  fetchHolidays()
 })
 </script>
 
@@ -1221,6 +1276,19 @@ onMounted(() => {
                   </div>
                 </div>
 
+                <!-- 排除週末（daily 模式） -->
+                <div v-if="scheduleDrafts[entry.id]?.type === 'daily'" class="sched-field">
+                  <label class="sched-toggle-row">
+                    <input
+                      type="checkbox"
+                      class="sched-checkbox"
+                      :checked="scheduleDrafts[entry.id]?.exclude_weekends"
+                      @change="scheduleDrafts[entry.id] && (scheduleDrafts[entry.id].exclude_weekends = ($event.target as HTMLInputElement).checked)"
+                    />
+                    <span class="sched-toggle-label">排除週末（週六、日不執行）</span>
+                  </label>
+                </div>
+
                 <!-- 星期（weekly） -->
                 <div v-if="scheduleDrafts[entry.id]?.type === 'weekly'" class="sched-field">
                   <label class="sched-field-label">執行星期</label>
@@ -1284,6 +1352,46 @@ onMounted(() => {
                   {{ scheduleSaving[entry.id] ? '儲存中…' : '儲存設定' }}
                 </button>
               </div>
+            </div>
+          </div>
+
+          <!-- 非交易日管理 -->
+          <div class="holidays-card">
+            <div class="holidays-header">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <rect x="1" y="2" width="14" height="13" rx="2" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M1 6h14" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M5 1v2M11 1v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                <path d="M7 9l1.5 1.5L11 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/>
+              </svg>
+              <span class="holidays-title">非交易日管理</span>
+              <span class="holidays-badge">{{ holidays.length }} 天</span>
+            </div>
+            <p class="holidays-desc">列出不執行排程的非交易假日（例如颱風假、補假等）。每行一個日期，格式 <code class="inline-code">YYYY-MM-DD</code>。週末已由各任務的「排除週末」選項控制，此處無需重複填入。</p>
+
+            <div class="holidays-body">
+              <textarea
+                v-model="holidaysDraft"
+                class="holidays-textarea"
+                placeholder="2026-01-01&#10;2026-02-06&#10;2026-02-28"
+                spellcheck="false"
+                :disabled="holidaysLoading"
+              />
+              <div class="holidays-chips" v-if="holidays.length">
+                <span v-for="d in holidays" :key="d" class="holiday-chip">{{ d }}</span>
+              </div>
+            </div>
+
+            <div class="holidays-footer">
+              <span v-if="holidaysError" class="holidays-err">{{ holidaysError }}</span>
+              <button
+                class="btn-primary"
+                :class="{ 'btn-saved': holidaysSaved }"
+                :disabled="holidaysSaving || holidaysLoading"
+                @click="saveHolidays"
+              >
+                {{ holidaysSaving ? '儲存中…' : holidaysSaved ? '已儲存 ✓' : '儲存假日' }}
+              </button>
             </div>
           </div>
         </section>
@@ -2057,4 +2165,72 @@ onMounted(() => {
 .sched-run-upcoming { color: var(--blue); }
 
 .sched-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 4px; }
+
+/* ── 排除週末 toggle ─────────────────────────────────────────── */
+.sched-toggle-row {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  user-select: none;
+}
+.sched-checkbox {
+  width: 15px; height: 15px; accent-color: var(--blue); cursor: pointer;
+  flex-shrink: 0;
+}
+.sched-toggle-label { font-size: 13px; color: var(--t1); }
+
+/* ── 非交易日管理 ──────────────────────────────────────────────── */
+.holidays-card {
+  margin-top: 20px;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.holidays-header {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--warn);
+}
+.holidays-title { font-weight: 600; font-size: 14px; color: var(--t1); }
+.holidays-badge {
+  margin-left: auto;
+  background: color-mix(in oklch, var(--warn) 15%, transparent);
+  color: var(--warn);
+  border: 1px solid color-mix(in oklch, var(--warn) 30%, transparent);
+  border-radius: 20px;
+  padding: 2px 10px; font-size: 11px; font-weight: 600;
+}
+.holidays-desc { font-size: 12px; color: var(--t2); line-height: 1.6; }
+.inline-code {
+  font-family: var(--mono); font-size: 11px;
+  background: var(--s3); border-radius: 4px; padding: 1px 5px;
+  color: var(--blue);
+}
+.holidays-body { display: flex; gap: 12px; align-items: flex-start; }
+.holidays-textarea {
+  flex: 1; min-height: 100px; max-height: 200px;
+  background: var(--s1); border: 1px solid var(--line2);
+  color: var(--t1); border-radius: 8px; padding: 10px 12px;
+  font-family: var(--mono); font-size: 12px; line-height: 1.7;
+  resize: vertical; outline: none;
+  transition: border-color .15s;
+}
+.holidays-textarea:focus { border-color: var(--blue); }
+.holidays-textarea:disabled { opacity: .5; cursor: not-allowed; }
+.holidays-chips {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 200px; overflow-y: auto;
+  min-width: 110px;
+}
+.holiday-chip {
+  background: color-mix(in oklch, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--warn) 25%, transparent);
+  color: var(--warn);
+  border-radius: 6px; padding: 2px 8px;
+  font-family: var(--mono); font-size: 11px; white-space: nowrap;
+}
+.holidays-footer {
+  display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+}
+.holidays-err { font-size: 12px; color: var(--up); margin-right: auto; }
+.btn-saved { background: var(--dn) !important; }
 </style>
