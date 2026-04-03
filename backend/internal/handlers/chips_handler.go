@@ -229,10 +229,10 @@ func (h *ChipsHandler) Cancel(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"ok":                  true,
-		"runner_cancelled":    cancelledInRunner,
-		"db_rows_cancelled":   result.RowsAffected,
-		"message":             "已取消",
+		"ok":                true,
+		"runner_cancelled":  cancelledInRunner,
+		"db_rows_cancelled": result.RowsAffected,
+		"message":           "已取消",
 	})
 }
 
