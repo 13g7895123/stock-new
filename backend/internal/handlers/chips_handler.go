@@ -203,6 +203,17 @@ func (h *ChipsHandler) TriggerSingle(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "symbol": symbol, "total": total, "scheme": scheme})
 }
 
+// Cancel POST /api/chips/cancel
+// 取消目前執行中的籌碼爬取 job
+func (h *ChipsHandler) Cancel(c *gin.Context) {
+	cancelled := h.runner.Cancel()
+	if !cancelled {
+		c.JSON(http.StatusConflict, gin.H{"error": "沒有執行中的 job"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "取消請求已送出，job 將在處理完目前批次後停止"})
+}
+
 // TriggerCron 由後端 cron goroutine 呼叫（不走 HTTP）
 func TriggerCron(db *gorm.DB) {
 	runner := getChipsRunner(db)

@@ -108,6 +108,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 			chips.GET("/logs", chipsHandler.GetLogs)
 			chips.POST("/trigger", chipsHandler.Trigger)
 			chips.POST("/trigger-single", chipsHandler.TriggerSingle)
+			chips.POST("/cancel", chipsHandler.Cancel)
 		}
 
 		major := api.Group("/major")

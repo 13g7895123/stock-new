@@ -1,6 +1,7 @@
 package chips
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -30,8 +31,9 @@ type Runner struct {
 	concurrency  int
 	requestDelay time.Duration
 
-	mu      sync.Mutex
-	running bool
+	mu       sync.Mutex
+	running  bool
+	cancelFn context.CancelFunc
 }
 
 type scrapeResult struct {
@@ -67,7 +69,9 @@ func (r *Runner) Trigger(symbol string) (int, error) {
 		r.mu.Unlock()
 		return 0, ErrJobRunning
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	r.running = true
+	r.cancelFn = cancel
 	r.mu.Unlock()
 
 	var symbols []string
@@ -78,22 +82,48 @@ func (r *Runner) Trigger(symbol string) (int, error) {
 		symbols, err = r.loadSymbols()
 	}
 	if err != nil {
-		r.setRunning(false)
+		r.clearRunning()
 		return 0, err
 	}
 	if len(symbols) == 0 {
-		r.setRunning(false)
+		r.clearRunning()
 		return 0, ErrNoSymbols
 	}
 
-	go r.runJob(symbols)
+	go r.runJob(ctx, symbols)
 	return len(symbols), nil
+}
+
+// Cancel 中止目前執行中的 job，回傳 false 表示沒有在跑。
+func (r *Runner) Cancel() bool {
+	r.mu.Lock()
+	fn := r.cancelFn
+	run := r.running
+	r.mu.Unlock()
+	if !run || fn == nil {
+		return false
+	}
+	fn()
+	return true
+}
+
+func (r *Runner) IsRunning() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.running
 }
 
 func (r *Runner) setRunning(v bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.running = v
+}
+
+func (r *Runner) clearRunning() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.running = false
+	r.cancelFn = nil
 }
 
 func (r *Runner) loadSymbols() ([]string, error) {
@@ -117,8 +147,8 @@ func (r *Runner) loadSymbols() ([]string, error) {
 	return symbols, nil
 }
 
-func (r *Runner) runJob(symbols []string) {
-	defer r.setRunning(false)
+func (r *Runner) runJob(ctx context.Context, symbols []string) {
+	defer r.clearRunning()
 
 	job := models.ChipsSyncJob{
 		StartedAt: time.Now(),
@@ -136,27 +166,44 @@ func (r *Runner) runJob(symbols []string) {
 	WriteLog(r.db, jobPtr(job.ID), "info", "job_start", "",
 		fmt.Sprintf("開始爬取，共 %d 支股票", len(symbols)))
 
-	jobs := make(chan string)
-	results := make(chan scrapeResult, len(symbols))
 	workerCount := minInt(r.concurrency, len(symbols))
-	for i := 0; i < workerCount; i++ {
-		go r.worker(job.ID, jobs, results)
-	}
+	jobs := make(chan string)
+	results := make(chan scrapeResult, workerCount*2)
 
+	// Dispatcher：依 ctx 控制是否繼續送 symbol
 	go func() {
 		defer close(jobs)
 		for _, symbol := range symbols {
-			jobs <- symbol
+			select {
+			case jobs <- symbol:
+			case <-ctx.Done():
+				return
+			}
 		}
+	}()
+
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.worker(job.ID, jobs, results)
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
 	}()
 
 	success := 0
 	fail := 0
+	processed := 0
+	cancelled := false
 	const maxFailureSamples = 20
 	failureSamples := make([]string, 0, maxFailureSamples)
 
-	for processed := 1; processed <= len(symbols); processed++ {
-		result := <-results
+	for result := range results {
+		processed++
 		if result.success {
 			success++
 		} else {
@@ -171,7 +218,14 @@ func (r *Runner) runJob(symbols []string) {
 			}
 		}
 
-		if processed%5 == 0 || processed == len(symbols) {
+		// 檢查是否已被取消
+		select {
+		case <-ctx.Done():
+			cancelled = true
+		default:
+		}
+
+		if processed%5 == 0 {
 			message := fmt.Sprintf("處理中 %d/%d：%s", processed, len(symbols), result.symbol)
 			if err := r.db.Model(&models.ChipsSyncJob{}).
 				Where("id = ?", job.ID).
@@ -183,13 +237,17 @@ func (r *Runner) runJob(symbols []string) {
 
 	completedAt := time.Now()
 	status := "completed"
-	if success == 0 && fail > 0 {
+	if cancelled {
+		status = "cancelled"
+	} else if success == 0 && fail > 0 {
 		status = "failed"
 	}
 
 	// 組合最終 message：成功/失敗統計 + 失敗範例
 	message := fmt.Sprintf("完成：成功 %d，失敗 %d", success, fail)
-	if len(failureSamples) > 0 {
+	if cancelled {
+		message = fmt.Sprintf("已取消（已處理 %d/%d，成功 %d，失敗 %d）", processed, len(symbols), success, fail)
+	} else if len(failureSamples) > 0 {
 		message += "\n\n失敗範例（前" + fmt.Sprintf("%d", len(failureSamples)) + "支）：\n"
 		for _, s := range failureSamples {
 			message += "• " + s + "\n"

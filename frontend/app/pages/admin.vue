@@ -12,13 +12,13 @@ useHead({
 })
 
 // ── Section 導航 ──────────────────────────────────────────────
-type Section = 'settings' | 'logs' | 'db' | 'schedule'
+type Section = 'settings' | 'logs' | 'db' | 'schedule' | 'jobs'
 const route = useRoute()
 const activeSection = ref<Section>('settings')
 
 onMounted(() => {
   const s = route.query.section as string
-  if (s === 'settings' || s === 'logs' || s === 'db' || s === 'schedule') activeSection.value = s
+  if (s === 'settings' || s === 'logs' || s === 'db' || s === 'schedule' || s === 'jobs') activeSection.value = s
 })
 
 watch(activeSection, (s) => {
@@ -532,12 +532,184 @@ async function saveHolidays() {
   }
 }
 
+// ══════════════════════════════════════════════════════════════
+// 背景任務 Section
+// ══════════════════════════════════════════════════════════════
+interface JobStatus {
+  id?: number
+  status: string
+  total?: number
+  success?: number
+  fail?: number
+  message?: string
+  started_at?: string
+  completed_at?: string
+  is_fresh?: boolean
+}
+
+interface JobDef {
+  key: string
+  label: string
+  description: string
+  statusUrl: string
+  triggerUrl: string
+  cancelUrl?: string
+  logsUrl?: string
+  color: string
+}
+
+const jobDefs: JobDef[] = [
+  {
+    key: 'chips',
+    label: '籌碼金字塔',
+    description: '抓取 norway.twsthr.info 各股持股分佈',
+    statusUrl: '/api/chips/status',
+    triggerUrl: '/api/chips/trigger',
+    cancelUrl: '/api/chips/cancel',
+    logsUrl: '/api/chips/logs?level=error&limit=5',
+    color: '#a78ce8',
+  },
+  {
+    key: 'prices',
+    label: '每日日K',
+    description: '爬取所有股票 OHLCV 歷史資料',
+    statusUrl: '/api/scraper/prices/all/status',
+    triggerUrl: '/api/scraper/prices/all/trigger',
+    color: '#4ecfa8',
+  },
+  {
+    key: 'major',
+    label: '主力進出（券商分點）',
+    description: '抓取券商買賣超資料',
+    statusUrl: '/api/major/status',
+    triggerUrl: '/api/major/trigger',
+    color: '#f0a842',
+  },
+  {
+    key: 'winrate',
+    label: '勝率計算',
+    description: '計算券商歷史勝率統計',
+    statusUrl: '/api/winrate/status',
+    triggerUrl: '/api/winrate/trigger',
+    color: '#5b9cf6',
+  },
+]
+
+const jobStatuses = ref<Record<string, JobStatus>>({})
+const jobTriggering = ref<Record<string, boolean>>({})
+const jobCancelling = ref<Record<string, boolean>>({})
+const jobErrors = ref<Record<string, string>>({})
+const jobRecentErrors = ref<Record<string, string[]>>({})
+let jobPollTimer: ReturnType<typeof setTimeout> | null = null
+
+const anyJobRunning = computed(() =>
+  Object.values(jobStatuses.value).some(s => s.status === 'running'),
+)
+
+async function fetchJobStatus(def: JobDef) {
+  try {
+    const data = await $fetch<JobStatus>(def.statusUrl)
+    jobStatuses.value[def.key] = data
+  } catch {
+    // ignore connectivity errors in polling
+  }
+}
+
+async function fetchJobLogs(def: JobDef) {
+  if (!def.logsUrl) return
+  try {
+    const data = await $fetch<{ logs: { message: string }[] }>(def.logsUrl)
+    jobRecentErrors.value[def.key] = (data.logs ?? []).map(l => l.message).slice(0, 3)
+  } catch {}
+}
+
+async function fetchAllJobStatuses() {
+  await Promise.all(jobDefs.map(d => fetchJobStatus(d)))
+  const chipsStatus = jobStatuses.value['chips']
+  if (chipsStatus?.status === 'running' || chipsStatus?.status === 'failed') {
+    await fetchJobLogs(jobDefs[0])
+  }
+}
+
+function scheduleJobPoll() {
+  if (jobPollTimer) clearTimeout(jobPollTimer)
+  jobPollTimer = setTimeout(async () => {
+    await fetchAllJobStatuses()
+    scheduleJobPoll()
+  }, 5000)
+}
+
+async function triggerJob(def: JobDef) {
+  jobTriggering.value[def.key] = true
+  jobErrors.value[def.key] = ''
+  try {
+    await $fetch(def.triggerUrl, { method: 'POST' })
+    await fetchJobStatus(def)
+  } catch (e: unknown) {
+    const err = e as { data?: { error?: string }; message?: string }
+    jobErrors.value[def.key] = err?.data?.error ?? err?.message ?? '觸發失敗'
+  } finally {
+    jobTriggering.value[def.key] = false
+  }
+}
+
+async function cancelJob(def: JobDef) {
+  if (!def.cancelUrl) return
+  jobCancelling.value[def.key] = true
+  jobErrors.value[def.key] = ''
+  try {
+    await $fetch(def.cancelUrl, { method: 'POST' })
+    await fetchJobStatus(def)
+  } catch (e: unknown) {
+    const err = e as { data?: { error?: string }; message?: string }
+    jobErrors.value[def.key] = err?.data?.error ?? err?.message ?? '取消失敗'
+  } finally {
+    jobCancelling.value[def.key] = false
+  }
+}
+
+function jobStatusLabel(status: string): string {
+  const map: Record<string, string> = {
+    running: '執行中', completed: '已完成', failed: '失敗', cancelled: '已取消', never: '尚未執行',
+  }
+  return map[status] ?? status
+}
+
+function jobStatusClass(status: string): string {
+  const map: Record<string, string> = {
+    running: 'job-status--running', completed: 'job-status--done',
+    failed: 'job-status--fail', cancelled: 'job-status--cancel', never: 'job-status--idle',
+  }
+  return map[status] ?? ''
+}
+
+function jobPct(s: JobStatus): number {
+  if (!s.total) return 0
+  const done = (s.success ?? 0) + (s.fail ?? 0)
+  return Math.min(100, Math.round(done / s.total * 100))
+}
+
+function fmtJobTime(t?: string): string {
+  if (!t) return '—'
+  try {
+    return new Date(t).toLocaleString('zh-TW', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })
+  } catch { return t }
+}
+
 // ── 初始化 ────────────────────────────────────────────────────
 onMounted(() => {
   fetchSettings()
   fetchDbTables()
   fetchSchedules()
   fetchHolidays()
+  fetchAllJobStatuses()
+  scheduleJobPoll()
+})
+
+onUnmounted(() => {
+  if (jobPollTimer) clearTimeout(jobPollTimer)
 })
 </script>
 
@@ -629,6 +801,18 @@ onMounted(() => {
               <circle cx="11.5" cy="11.5" r="2" fill="currentColor" opacity="0.85"/>
             </svg>
             排程管理
+          </button>
+          <button
+            class="nav-item"
+            :class="{ active: activeSection === 'jobs' }"
+            @click="activeSection = 'jobs'"
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M8 5v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            背景任務
+            <span v-if="anyJobRunning" class="nav-badge nav-badge--running">執行中</span>
           </button>
         </nav>
 
@@ -1392,6 +1576,122 @@ onMounted(() => {
               >
                 {{ holidaysSaving ? '儲存中…' : holidaysSaved ? '已儲存 ✓' : '儲存假日' }}
               </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ════ 背景任務 ════ -->
+        <section v-else-if="activeSection === 'jobs'" class="section-wrap">
+          <div class="section-header">
+            <div>
+              <h1 class="section-title">背景任務</h1>
+              <p class="section-desc">監控所有背景 Job 的執行狀態，每 5 秒自動更新</p>
+            </div>
+            <button class="btn-secondary" @click="fetchAllJobStatuses">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <path d="M12.5 1v3.7H8.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              重新整理
+            </button>
+          </div>
+
+          <div class="jobs-grid">
+            <div
+              v-for="def in jobDefs"
+              :key="def.key"
+              class="job-card"
+              :class="jobStatusClass(jobStatuses[def.key]?.status ?? 'never')"
+            >
+              <!-- Card Header -->
+              <div class="job-card__head">
+                <div class="job-card__title-row">
+                  <span class="job-dot" :style="{ background: def.color }" />
+                  <span class="job-card__name">{{ def.label }}</span>
+                  <span class="job-status-badge" :class="jobStatusClass(jobStatuses[def.key]?.status ?? 'never')">
+                    {{ jobStatusLabel(jobStatuses[def.key]?.status ?? 'never') }}
+                  </span>
+                </div>
+                <p class="job-card__desc">{{ def.description }}</p>
+              </div>
+
+              <!-- Stats Row -->
+              <div v-if="jobStatuses[def.key]?.id" class="job-stats">
+                <div class="job-stat">
+                  <span class="job-stat__label">總計</span>
+                  <span class="job-stat__val">{{ jobStatuses[def.key]?.total ?? '—' }}</span>
+                </div>
+                <div class="job-stat">
+                  <span class="job-stat__label">成功</span>
+                  <span class="job-stat__val job-stat__val--ok">{{ jobStatuses[def.key]?.success ?? 0 }}</span>
+                </div>
+                <div class="job-stat">
+                  <span class="job-stat__label">失敗</span>
+                  <span class="job-stat__val" :class="(jobStatuses[def.key]?.fail ?? 0) > 0 ? 'job-stat__val--fail' : ''">{{ jobStatuses[def.key]?.fail ?? 0 }}</span>
+                </div>
+                <div class="job-stat">
+                  <span class="job-stat__label">開始</span>
+                  <span class="job-stat__val">{{ fmtJobTime(jobStatuses[def.key]?.started_at) }}</span>
+                </div>
+                <div v-if="jobStatuses[def.key]?.status !== 'running'" class="job-stat">
+                  <span class="job-stat__label">完成</span>
+                  <span class="job-stat__val">{{ fmtJobTime(jobStatuses[def.key]?.completed_at) }}</span>
+                </div>
+              </div>
+
+              <!-- Progress Bar (running only) -->
+              <div v-if="jobStatuses[def.key]?.status === 'running'" class="job-progress">
+                <div class="job-progress__track">
+                  <div class="job-progress__fill" :style="{ width: `${jobPct(jobStatuses[def.key]!)}%`, background: def.color }" />
+                </div>
+                <div class="job-progress__meta">
+                  <span>{{ jobStatuses[def.key]?.message }}</span>
+                  <span>{{ jobPct(jobStatuses[def.key]!) }}%</span>
+                </div>
+              </div>
+
+              <!-- Message (completed/failed/cancelled) -->
+              <div v-else-if="jobStatuses[def.key]?.message && jobStatuses[def.key]?.status !== 'never'" class="job-message">
+                <span class="job-message__text">{{ jobStatuses[def.key]?.message }}</span>
+              </div>
+
+              <!-- Recent Errors (chips only) -->
+              <div v-if="def.key === 'chips' && jobRecentErrors['chips']?.length" class="job-errors">
+                <p class="job-errors__title">最近錯誤（前 {{ jobRecentErrors['chips'].length }} 筆）</p>
+                <p v-for="(msg, i) in jobRecentErrors['chips']" :key="i" class="job-errors__item">{{ msg }}</p>
+              </div>
+
+              <!-- Error from action -->
+              <p v-if="jobErrors[def.key]" class="job-action-err">{{ jobErrors[def.key] }}</p>
+
+              <!-- Actions -->
+              <div class="job-actions">
+                <button
+                  v-if="jobStatuses[def.key]?.status !== 'running'"
+                  class="job-btn job-btn--trigger"
+                  :disabled="jobTriggering[def.key]"
+                  @click="triggerJob(def)"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                    <path d="M4 2l10 6-10 6V2z" fill="currentColor"/>
+                  </svg>
+                  {{ jobTriggering[def.key] ? '觸發中…' : '立即觸發' }}
+                </button>
+                <button
+                  v-if="jobStatuses[def.key]?.status === 'running' && def.cancelUrl"
+                  class="job-btn job-btn--cancel"
+                  :disabled="jobCancelling[def.key]"
+                  @click="cancelJob(def)"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                    <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
+                  </svg>
+                  {{ jobCancelling[def.key] ? '取消中…' : '停止 Job' }}
+                </button>
+                <span v-if="jobStatuses[def.key]?.status === 'running' && !def.cancelUrl" class="job-running-label">
+                  <span class="job-spin">◌</span> 執行中，無法取消
+                </span>
+              </div>
             </div>
           </div>
         </section>
@@ -2233,4 +2533,118 @@ onMounted(() => {
 }
 .holidays-err { font-size: 12px; color: var(--up); margin-right: auto; }
 .btn-saved { background: var(--dn) !important; }
+
+/* ═══════════════════════════════════════
+   背景任務 Section
+═══════════════════════════════════════ */
+.nav-badge--running {
+  background: color-mix(in oklch, var(--up) 18%, var(--s3));
+  color: var(--up); animation: pulse-badge 1.8s ease-in-out infinite;
+}
+@keyframes pulse-badge { 0%,100% { opacity: 1 } 50% { opacity: 0.55 } }
+
+.jobs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+.job-card {
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: border-color 0.15s;
+}
+.job-card.job-status--running { border-color: color-mix(in oklch, var(--blue) 40%, var(--line)); }
+.job-card.job-status--fail    { border-color: color-mix(in oklch, var(--up)   30%, var(--line)); }
+
+.job-card__head { display: flex; flex-direction: column; gap: 5px; }
+.job-card__title-row { display: flex; align-items: center; gap: 8px; }
+.job-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.job-card__name { font-size: 14px; font-weight: 600; color: var(--t1); flex: 1; }
+.job-card__desc { font-size: 12px; color: var(--t3); line-height: 1.5; padding-left: 16px; }
+
+.job-status-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; flex-shrink: 0;
+}
+.job-status--running { background: color-mix(in oklch, var(--blue) 15%, var(--s2)); color: var(--blue); }
+.job-status--done    { background: color-mix(in oklch, var(--dn)   12%, var(--s2)); color: var(--dn);   }
+.job-status--fail    { background: color-mix(in oklch, var(--up)   12%, var(--s2)); color: var(--up);   }
+.job-status--cancel  { background: color-mix(in oklch, var(--warn) 12%, var(--s2)); color: var(--warn); }
+.job-status--idle    { background: var(--s3); color: var(--t3); }
+
+.job-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 8px;
+  background: var(--s2);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.job-stat { display: flex; flex-direction: column; gap: 3px; }
+.job-stat__label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--t3); }
+.job-stat__val { font-size: 13px; font-weight: 600; color: var(--t1); font-variant-numeric: tabular-nums; }
+.job-stat__val--ok   { color: var(--dn); }
+.job-stat__val--fail { color: var(--up); }
+
+.job-progress { display: flex; flex-direction: column; gap: 6px; }
+.job-progress__track {
+  height: 5px; background: var(--s3); border-radius: 99px; overflow: hidden;
+}
+.job-progress__fill {
+  height: 100%; border-radius: 99px;
+  transition: width 0.6s ease;
+}
+.job-progress__meta {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--t3);
+}
+
+.job-message {
+  background: var(--s2); border-radius: 7px; padding: 8px 10px;
+}
+.job-message__text {
+  font-size: 11.5px; color: var(--t2); white-space: pre-wrap; line-height: 1.6;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.job-errors {
+  background: color-mix(in oklch, var(--up) 6%, var(--s2));
+  border: 1px solid color-mix(in oklch, var(--up) 20%, var(--line));
+  border-radius: 7px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;
+}
+.job-errors__title { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; color: var(--up); text-transform: uppercase; }
+.job-errors__item { font-size: 11px; color: var(--t2); font-family: var(--mono); }
+
+.job-action-err { font-size: 12px; color: var(--up); }
+
+.job-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.job-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: 8px;
+  font-family: var(--font); font-size: 12.5px; font-weight: 500;
+  border: 1px solid var(--line2); cursor: pointer; transition: all 0.15s;
+}
+.job-btn:disabled { opacity: 0.4; cursor: default; }
+.job-btn--trigger {
+  background: color-mix(in oklch, var(--blue) 10%, var(--s2));
+  color: var(--blue); border-color: color-mix(in oklch, var(--blue) 25%, var(--line));
+}
+.job-btn--trigger:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--blue) 20%, var(--s2));
+}
+.job-btn--cancel {
+  background: color-mix(in oklch, var(--up) 10%, var(--s2));
+  color: var(--up); border-color: color-mix(in oklch, var(--up) 25%, var(--line));
+}
+.job-btn--cancel:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--up) 18%, var(--s2));
+}
+.job-running-label { font-size: 12px; color: var(--t3); display: flex; align-items: center; gap: 5px; }
+.job-spin { display: inline-block; animation: spin 1.2s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
