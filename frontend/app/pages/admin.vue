@@ -240,11 +240,6 @@ async function goDbPage(p: number) {
   await fetchDbData(selectedTable.value, p)
 }
 
-function displayVal(v: unknown): string {
-  if (v === null || v === undefined) return 'NULL'
-  if (typeof v === 'object') return JSON.stringify(v)
-  return String(v)
-}
 function isNull(v: unknown) { return v === null || v === undefined }
 
 const dataColumns = computed<string[]>(() => {
@@ -254,6 +249,32 @@ const dataColumns = computed<string[]>(() => {
 const selectedTableInfo = computed(() =>
   tables.value.find(t => t.name === selectedTable.value),
 )
+
+const dbColSearch = ref('')
+const filteredColumns = computed(() => {
+  if (!dbColSearch.value.trim()) return columns.value
+  const q = dbColSearch.value.toLowerCase()
+  return columns.value.filter(c =>
+    c.name.toLowerCase().includes(q) || c.type.toLowerCase().includes(q),
+  )
+})
+
+function typeClass(t: string): string {
+  const lower = t.toLowerCase()
+  if (/int|serial/.test(lower)) return 'type-int'
+  if (/varchar|text|char|uuid|enum/.test(lower)) return 'type-str'
+  if (/bool/.test(lower)) return 'type-bool'
+  if (/timestamp|date|time/.test(lower)) return 'type-time'
+  if (/numeric|decimal|float|double|real/.test(lower)) return 'type-num'
+  if (/json|array/.test(lower)) return 'type-json'
+  return 'type-other'
+}
+
+function dbDisplayVal(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
+}
 
 // ══════════════════════════════════════════════════════════════
 // 操作紀錄 Section
@@ -915,10 +936,19 @@ onMounted(() => {
 
         <!-- ════ 資料庫 ════ -->
         <section v-else-if="activeSection === 'db'" class="section-wrap section-wrap--db">
-          <div class="section-header">
-            <div>
-              <h1 class="section-title">資料庫檢視</h1>
-              <p class="section-desc">PostgreSQL · public schema 資料表瀏覽</p>
+
+          <!-- DB 標題列 -->
+          <div class="db-header">
+            <div class="db-header-left">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="db-header-icon" aria-hidden="true">
+                <ellipse cx="8" cy="4" rx="6" ry="2.2" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M2 4v4c0 1.2 2.69 2.2 6 2.2s6-1 6-2.2V4" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M2 8v4c0 1.2 2.69 2.2 6 2.2s6-1 6-2.2V8" stroke="currentColor" stroke-width="1.4"/>
+              </svg>
+              <div>
+                <h1 class="section-title">資料庫檢視</h1>
+                <p class="section-desc">PostgreSQL · public schema · {{ tables.length }} 個資料表</p>
+              </div>
             </div>
             <button class="btn-secondary" :disabled="dbLoading" @click="fetchDbTables">
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" :class="{ spin: dbLoading }">
@@ -930,85 +960,156 @@ onMounted(() => {
           </div>
 
           <div class="db-layout">
-            <!-- 資料表清單 -->
-            <aside class="db-sidebar">
-              <div class="db-sidebar-title">資料表</div>
-              <div v-if="dbLoading" class="feat-loading"><span class="spin-icon">◌</span> 載入中…</div>
-              <ul v-else class="db-table-list">
-                <li
-                  v-for="t in tables"
-                  :key="t.name"
-                  class="db-table-item"
-                  :class="{ active: t.name === selectedTable }"
-                  @click="selectDbTable(t.name)"
-                >
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" opacity="0.5"><rect x="1" y="3" width="14" height="10" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M1 7h14M6 3v10" stroke="currentColor" stroke-width="1.3"/></svg>
-                  <span class="db-table-name">{{ t.name }}</span>
-                  <span class="db-table-count">{{ t.row_count.toLocaleString() }}</span>
-                </li>
-              </ul>
-              <div v-if="!dbLoading && tables.length === 0" class="feat-loading">無資料表</div>
-            </aside>
 
-            <!-- 資料內容 -->
-            <div class="db-content">
-              <div v-if="!selectedTable" class="empty-state">
-                <svg width="36" height="36" viewBox="0 0 36 36" fill="none"><ellipse cx="18" cy="9" rx="13" ry="5" stroke="currentColor" stroke-width="1.6"/><path d="M5 9v9c0 2.76 5.82 5 13 5s13-2.24 13-5V9" stroke="currentColor" stroke-width="1.6"/><path d="M5 18v9c0 2.76 5.82 5 13 5s13-2.24 13-5v-9" stroke="currentColor" stroke-width="1.6"/></svg>
-                <p>從左側選擇一個資料表</p>
+            <!-- ── 資料表清單側邊欄 ── -->
+            <aside class="db-sidebar">
+              <div v-if="dbLoading" class="db-sidebar-loading">
+                <span class="spin-icon">◌</span> 載入中…
               </div>
               <template v-else>
-                <!-- 資料表標題 -->
-                <div class="db-content-header">
-                  <div class="db-content-title">
-                    <span>{{ selectedTable }}</span>
-                    <span v-if="selectedTableInfo" class="db-row-count">{{ selectedTableInfo.row_count.toLocaleString() }} 列</span>
+                <div v-if="tables.length === 0" class="db-sidebar-empty">無資料表</div>
+                <ul v-else class="db-table-list">
+                  <li
+                    v-for="t in tables"
+                    :key="t.name"
+                    class="db-table-item"
+                    :class="{ active: t.name === selectedTable }"
+                    @click="selectDbTable(t.name)"
+                  >
+                    <div class="db-table-item-accent" />
+                    <div class="db-table-item-body">
+                      <span class="db-table-name">{{ t.name }}</span>
+                      <span class="db-table-count">{{ t.row_count.toLocaleString() }}</span>
+                    </div>
+                  </li>
+                </ul>
+              </template>
+            </aside>
+
+            <!-- ── 主內容區 ── -->
+            <div class="db-content">
+
+              <!-- 空狀態 -->
+              <div v-if="!selectedTable" class="db-empty-state">
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none" opacity="0.25">
+                  <ellipse cx="24" cy="12" rx="17" ry="6" stroke="currentColor" stroke-width="2"/>
+                  <path d="M7 12v12c0 3.3 7.6 6 17 6s17-2.7 17-6V12" stroke="currentColor" stroke-width="2"/>
+                  <path d="M7 24v12c0 3.3 7.6 6 17 6s17-2.7 17-6V24" stroke="currentColor" stroke-width="2"/>
+                </svg>
+                <p class="db-empty-title">選擇資料表</p>
+                <p class="db-empty-hint">從左側清單點選一個資料表開始瀏覽</p>
+              </div>
+
+              <template v-else>
+
+                <!-- 工具列 -->
+                <div class="db-toolbar">
+                  <div class="db-toolbar-left">
+                    <span class="db-toolbar-name">{{ selectedTable }}</span>
+                    <span v-if="selectedTableInfo" class="db-toolbar-count">
+                      {{ selectedTableInfo.row_count.toLocaleString() }} 列
+                    </span>
                   </div>
-                  <div class="db-tabs">
-                    <button class="db-tab" :class="{ active: dbActiveTab === 'data' }" @click="dbActiveTab = 'data'">資料</button>
-                    <button class="db-tab" :class="{ active: dbActiveTab === 'schema' }" @click="dbActiveTab = 'schema'">Schema</button>
+                  <div class="db-toolbar-right">
+                    <!-- 欄位搜尋（Schema 模式限定） -->
+                    <div v-if="dbActiveTab === 'schema'" class="db-col-search">
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" class="db-search-icon">
+                        <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.4"/>
+                        <path d="M10 10l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                      </svg>
+                      <input v-model="dbColSearch" class="db-col-input" placeholder="搜尋欄位名稱 / 型別…" />
+                    </div>
+                    <!-- Tab 切換 -->
+                    <div class="db-tab-group">
+                      <button
+                        class="db-tab"
+                        :class="{ active: dbActiveTab === 'data' }"
+                        @click="dbActiveTab = 'data'; dbColSearch = ''"
+                      >資料</button>
+                      <button
+                        class="db-tab"
+                        :class="{ active: dbActiveTab === 'schema' }"
+                        @click="dbActiveTab = 'schema'"
+                      >結構</button>
+                    </div>
                   </div>
                 </div>
 
-                <!-- Schema -->
+                <!-- ── Schema 結構 ── -->
                 <div v-if="dbActiveTab === 'schema'" class="db-table-wrap">
-                  <table class="data-table">
-                    <thead><tr><th>欄位名稱</th><th>資料型別</th><th>可 Null</th><th>預設值</th></tr></thead>
+                  <div v-if="filteredColumns.length === 0" class="db-no-match">無符合欄位</div>
+                  <table v-else class="data-table">
+                    <thead>
+                      <tr>
+                        <th class="th-rownum">#</th>
+                        <th>欄位名稱</th>
+                        <th>資料型別</th>
+                        <th>可 NULL</th>
+                        <th>預設值</th>
+                      </tr>
+                    </thead>
                     <tbody>
-                      <tr v-for="col in columns" :key="col.name">
+                      <tr v-for="(col, idx) in filteredColumns" :key="col.name">
+                        <td class="td-rownum">{{ idx + 1 }}</td>
                         <td class="col-name">{{ col.name }}</td>
-                        <td class="col-type">{{ col.type }}</td>
-                        <td><span :class="col.nullable === 'YES' ? 'badge-yes' : 'badge-no'">{{ col.nullable }}</span></td>
+                        <td>
+                          <span class="type-badge" :class="typeClass(col.type)">{{ col.type }}</span>
+                        </td>
+                        <td>
+                          <span v-if="col.nullable === 'YES'" class="nullable-yes">可空</span>
+                          <span v-else class="nullable-no">必填</span>
+                        </td>
                         <td class="col-default">{{ col.default || '—' }}</td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
 
-                <!-- Data -->
+                <!-- ── 資料瀏覽 ── -->
                 <div v-else class="db-table-wrap">
-                  <div v-if="dbDataLoading" class="feat-loading"><span class="spin-icon">◌</span> 載入中…</div>
-                  <table v-else-if="tableData && dataColumns.length" class="data-table data-table--scroll">
+                  <div v-if="dbDataLoading" class="db-loading-overlay">
+                    <span class="spin-icon">◌</span> 載入中…
+                  </div>
+                  <table v-else-if="tableData && dataColumns.length" class="data-table">
                     <thead>
                       <tr>
+                        <th class="th-rownum">#</th>
                         <th v-for="col in dataColumns" :key="col">{{ col }}</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-for="(row, ri) in tableData.data" :key="ri">
+                        <td class="td-rownum">{{ (dbPage - 1) * 50 + ri + 1 }}</td>
                         <td
                           v-for="col in dataColumns"
                           :key="col"
                           :class="{ 'null-cell': isNull(row[col]) }"
-                        >{{ displayVal(row[col]) }}</td>
+                        >
+                          <span v-if="isNull(row[col])" class="null-pill">NULL</span>
+                          <span v-else>{{ dbDisplayVal(row[col]) }}</span>
+                        </td>
                       </tr>
                     </tbody>
                   </table>
+                  <div v-else-if="!dbDataLoading" class="db-no-match">此資料表無資料</div>
+
+                  <!-- 分頁列 -->
                   <div v-if="tableData && tableData.pages > 1" class="db-pagination">
-                    <button class="page-btn" :disabled="dbPage <= 1" @click="goDbPage(dbPage - 1)">←</button>
-                    <span class="page-info">{{ dbPage }} / {{ tableData.pages }}</span>
-                    <button class="page-btn" :disabled="dbPage >= tableData.pages" @click="goDbPage(dbPage + 1)">→</button>
+                    <button class="page-btn" :disabled="dbPage <= 1" @click="goDbPage(dbPage - 1)">
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      上一頁
+                    </button>
+                    <div class="page-center">
+                      <span class="page-current">第 {{ dbPage }} / {{ tableData.pages }} 頁</span>
+                      <span class="page-total">共 {{ tableData.total.toLocaleString() }} 筆</span>
+                    </div>
+                    <button class="page-btn" :disabled="dbPage >= tableData.pages" @click="goDbPage(dbPage + 1)">
+                      下一頁
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
                   </div>
                 </div>
+
               </template>
             </div>
           </div>
@@ -1621,60 +1722,240 @@ onMounted(() => {
 /* ═══════════════════════════════════════
    DB Viewer Section
 ═══════════════════════════════════════ */
-.db-layout { display: flex; flex: 1; overflow: hidden; height: 100%; }
+
+/* 整體 Section 布局 */
+.section-wrap--db { overflow: hidden; }
+
+/* DB 標題列 */
+.db-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 22px; border-bottom: 1px solid var(--line);
+  background: var(--s1); flex-shrink: 0;
+}
+.db-header-left { display: flex; align-items: center; gap: 12px; }
+.db-header-icon { color: var(--t3); flex-shrink: 0; }
+
+/* 主布局 */
+.db-layout { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+
+/* 側邊欄 ─ 資料表清單 */
 .db-sidebar {
-  width: 220px; min-width: 180px; flex-shrink: 0;
+  width: 230px; min-width: 200px; flex-shrink: 0;
   background: var(--s1); border-right: 1px solid var(--line);
-  overflow-y: auto; padding: 0;
+  overflow-y: auto; display: flex; flex-direction: column;
 }
-.db-sidebar-title {
-  font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
-  text-transform: uppercase; color: var(--t3);
-  padding: 14px 16px 8px;
-}
-.db-table-list { list-style: none; padding: 0 8px 8px; }
-.db-table-item {
+.db-sidebar-loading {
+  padding: 20px 16px; color: var(--t3); font-size: 12px;
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px; border-radius: 7px;
-  cursor: pointer; transition: background 0.12s; margin-bottom: 2px;
+}
+.db-sidebar-empty { padding: 20px 16px; font-size: 12px; color: var(--t3); }
+
+.db-table-list { list-style: none; padding: 8px; }
+.db-table-item {
+  display: flex; align-items: stretch;
+  border-radius: 8px; cursor: pointer;
+  transition: background 0.12s; margin-bottom: 2px;
+  overflow: hidden;
+  border: 1px solid transparent;
 }
 .db-table-item:hover { background: var(--s2); }
-.db-table-item.active { background: color-mix(in oklch, var(--blue) 10%, var(--s2)); }
-.db-table-name { font-size: 13px; font-weight: 500; color: var(--t1); flex: 1; font-family: var(--mono); }
-.db-table-count { font-size: 11px; color: var(--t3); flex-shrink: 0; }
-
-.db-content { flex: 1; overflow: auto; display: flex; flex-direction: column; }
-.db-content-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0;
+.db-table-item.active {
+  background: color-mix(in oklch, var(--blue) 8%, var(--s2));
+  border-color: color-mix(in oklch, var(--blue) 20%, var(--line));
 }
-.db-content-title { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; color: var(--t1); font-family: var(--mono); }
-.db-row-count { font-size: 11px; color: var(--t3); font-family: var(--font); font-weight: 400; }
-.db-tabs { display: flex; gap: 4px; }
+.db-table-item-accent {
+  width: 3px; flex-shrink: 0; border-radius: 4px 0 0 4px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.db-table-item.active .db-table-item-accent { background: var(--blue); }
+.db-table-item-body {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; flex: 1; padding: 8px 10px;
+}
+.db-table-name {
+  font-size: 12px; font-weight: 500; color: var(--t1);
+  font-family: var(--mono); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.db-table-item.active .db-table-name { color: var(--blue); }
+.db-table-count {
+  font-size: 10px; color: var(--t3); flex-shrink: 0;
+  background: var(--s3); border: 1px solid var(--line);
+  padding: 1px 6px; border-radius: 10px; font-family: var(--mono);
+}
+.db-table-item.active .db-table-count {
+  background: color-mix(in oklch, var(--blue) 12%, var(--s2));
+  border-color: color-mix(in oklch, var(--blue) 25%, var(--line));
+  color: var(--blue);
+}
+
+/* 主內容區 */
+.db-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+
+/* 空狀態 */
+.db-empty-state {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  padding: 60px 20px; text-align: center;
+}
+.db-empty-title { font-size: 15px; font-weight: 600; color: var(--t2); }
+.db-empty-hint { font-size: 12px; color: var(--t3); max-width: 260px; line-height: 1.5; }
+
+/* 工具列 */
+.db-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--line);
+  background: color-mix(in oklch, var(--s2) 70%, var(--s1));
+  flex-shrink: 0;
+}
+.db-toolbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.db-toolbar-name {
+  font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--t1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.db-toolbar-count {
+  font-size: 11px; color: var(--t3); white-space: nowrap;
+  background: var(--s3); padding: 2px 8px; border-radius: 10px;
+  border: 1px solid var(--line);
+}
+.db-toolbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+/* 欄位搜尋 */
+.db-col-search {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--s1); border: 1px solid var(--line); border-radius: 7px;
+  padding: 5px 10px;
+}
+.db-search-icon { opacity: 0.4; flex-shrink: 0; }
+.db-col-input {
+  background: none; border: none; outline: none;
+  font-family: var(--font); font-size: 12px; color: var(--t1); width: 160px;
+}
+.db-col-input::placeholder { color: var(--t3); }
+
+/* Tab 切換 */
+.db-tab-group {
+  display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+}
 .db-tab {
-  padding: 5px 12px; border-radius: 7px; font-size: 12px; font-weight: 500;
-  border: 1px solid var(--line); background: var(--s2); color: var(--t2);
+  padding: 5px 14px; border: none; border-right: 1px solid var(--line);
+  background: var(--s2); color: var(--t3);
+  font-family: var(--font); font-size: 12px; font-weight: 500;
   cursor: pointer; transition: all 0.12s;
 }
-.db-tab.active { background: var(--s3); border-color: var(--line2); color: var(--t1); }
+.db-tab:last-child { border-right: none; }
+.db-tab.active { background: var(--s3); color: var(--t1); }
 
-.db-table-wrap { flex: 1; overflow: auto; padding: 0; }
-.data-table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
-.data-table th { text-align: left; padding: 8px 14px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--t3); background: var(--s2); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 1; white-space: nowrap; }
-.data-table td { padding: 7px 14px; border-bottom: 1px solid color-mix(in oklch, var(--line) l c h / 50%); color: var(--t1); font-family: var(--mono); white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
-.data-table tr:hover td { background: var(--s2); }
-.null-cell { color: var(--t3) !important; font-style: italic; }
-.col-name { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--t1); }
-.col-type { font-family: var(--mono); font-size: 11px; color: var(--blue); }
+/* 資料表區域 */
+.db-table-wrap { flex: 1; overflow: auto; position: relative; }
+.db-loading-overlay {
+  padding: 24px; color: var(--t3); font-size: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.db-no-match { padding: 24px; color: var(--t3); font-size: 13px; }
+
+/* 資料表 */
+.data-table {
+  width: max-content; min-width: 100%;
+  border-collapse: collapse; font-size: 12px;
+}
+.data-table thead { position: sticky; top: 0; z-index: 2; }
+.data-table th {
+  text-align: left; padding: 9px 14px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--t3);
+  background: var(--s2);
+  border-bottom: 2px solid var(--line);
+  white-space: nowrap;
+}
+.data-table th.th-rownum {
+  color: var(--t3); width: 46px; text-align: right;
+  background: var(--s2); border-right: 1px solid var(--line);
+}
+.data-table tbody tr {
+  transition: background 0.1s;
+}
+.data-table tbody tr:nth-child(even) td {
+  background: color-mix(in oklch, var(--s2) 40%, transparent);
+}
+.data-table tbody tr:hover td { background: color-mix(in oklch, var(--blue) 6%, var(--s2)); }
+.data-table td {
+  padding: 7px 14px;
+  border-bottom: 1px solid color-mix(in oklch, var(--line) 60%, transparent);
+  color: var(--t1); font-family: var(--mono);
+  white-space: nowrap; max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; font-size: 11px;
+  vertical-align: middle;
+}
+.td-rownum {
+  text-align: right; color: var(--t3) !important;
+  font-size: 10px !important; padding-right: 10px !important;
+  user-select: none;
+  border-right: 1px solid var(--line);
+  background: var(--s2) !important;
+}
+.null-cell { }
+.null-pill {
+  display: inline-block; font-size: 9px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 4px;
+  background: var(--s3); border: 1px solid var(--line2);
+  color: var(--t3); font-family: var(--mono);
+}
+
+/* Schema 欄位樣式 */
+.col-name {
+  font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--t1);
+}
 .col-default { font-family: var(--mono); font-size: 11px; color: var(--t3); }
-.badge-yes { color: var(--dn); font-size: 11px; }
-.badge-no { color: var(--t3); font-size: 11px; }
 
-.db-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 14px; border-top: 1px solid var(--line); flex-shrink: 0; }
-.page-btn { padding: 6px 14px; border-radius: 7px; border: 1px solid var(--line); background: var(--s2); color: var(--t2); cursor: pointer; font-size: 13px; transition: all 0.12s; }
+/* 型別 Badge */
+.type-badge {
+  display: inline-block; font-size: 10px; font-family: var(--mono); font-weight: 500;
+  padding: 2px 7px; border-radius: 5px; white-space: nowrap;
+  border: 1px solid;
+}
+.type-int    { color: oklch(65% 0.19 264); background: oklch(65% 0.19 264 / 10%); border-color: oklch(65% 0.19 264 / 22%); }
+.type-str    { color: oklch(65% 0.17 148); background: oklch(65% 0.17 148 / 10%); border-color: oklch(65% 0.17 148 / 22%); }
+.type-bool   { color: oklch(72% 0.14 82);  background: oklch(72% 0.14 82  / 10%); border-color: oklch(72% 0.14 82  / 22%); }
+.type-time   { color: oklch(65% 0.17 200); background: oklch(65% 0.17 200 / 10%); border-color: oklch(65% 0.17 200 / 22%); }
+.type-num    { color: oklch(68% 0.17 320); background: oklch(68% 0.17 320 / 10%); border-color: oklch(68% 0.17 320 / 22%); }
+.type-json   { color: oklch(66% 0.17 50);  background: oklch(66% 0.17 50  / 10%); border-color: oklch(66% 0.17 50  / 22%); }
+.type-other  { color: var(--t3); background: var(--s3); border-color: var(--line2); }
+
+/* NULL 可空 Badge */
+.nullable-yes {
+  font-size: 10px; padding: 1px 6px; border-radius: 4px;
+  background: color-mix(in oklch, var(--warn) 10%, var(--s2));
+  border: 1px solid color-mix(in oklch, var(--warn) 22%, var(--line));
+  color: var(--warn);
+}
+.nullable-no {
+  font-size: 10px; padding: 1px 6px; border-radius: 4px;
+  background: var(--s3); border: 1px solid var(--line2);
+  color: var(--t3);
+}
+
+/* 分頁列 */
+.db-pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 16px; border-top: 1px solid var(--line);
+  background: color-mix(in oklch, var(--s2) 60%, var(--s1));
+  flex-shrink: 0;
+}
+.page-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 14px; border-radius: 7px;
+  border: 1px solid var(--line); background: var(--s2);
+  color: var(--t2); cursor: pointer; font-size: 12px;
+  font-family: var(--font); transition: all 0.12s;
+}
 .page-btn:hover:not(:disabled) { background: var(--s3); border-color: var(--line2); color: var(--t1); }
-.page-btn:disabled { opacity: 0.35; cursor: default; }
-.page-info { font-size: 12px; color: var(--t3); min-width: 60px; text-align: center; }
+.page-btn:disabled { opacity: 0.3; cursor: default; }
+.page-center { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.page-current { font-size: 12px; font-weight: 600; color: var(--t2); font-family: var(--mono); }
+.page-total { font-size: 10px; color: var(--t3); font-family: var(--mono); }
 
 /* ═══════════════════════════════════════
    Schedule Section
