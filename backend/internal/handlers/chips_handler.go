@@ -309,3 +309,29 @@ func (h *ChipsHandler) GetLogs(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"logs": logs, "count": len(logs)})
 }
+
+// GetSymbolLatest GET /api/chips/:symbol/latest
+// 回傳指定股票的最新持股分佈快照（含分層明細），無資料時回傳 data: null。
+func (h *ChipsHandler) GetSymbolLatest(c *gin.Context) {
+	symbol := strings.ToUpper(strings.TrimSpace(c.Param("symbol")))
+	if symbol == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "需提供股票代號"})
+		return
+	}
+
+	var snapshot models.ChipsHolderSnapshot
+	result := h.db.
+		Preload("Distributions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("tier_rank ASC")
+		}).
+		Where("symbol = ?", symbol).
+		Order("data_date DESC").
+		First(&snapshot)
+
+	if result.Error != nil {
+		c.JSON(http.StatusOK, gin.H{"data": nil})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": snapshot})
+}

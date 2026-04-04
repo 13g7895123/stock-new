@@ -458,7 +458,10 @@ function initChart() {
 onMounted(async () => { await nextTick(); initChart() })
 watch(prices, async () => { await nextTick(); initView(); drawChart() })
 watch(isDark, () => drawChart())
-onBeforeUnmount(() => roChart?.disconnect())
+onBeforeUnmount(() => {
+  roChart?.disconnect()
+  if (chipsStatusPoll) clearInterval(chipsStatusPoll)
+})
 
 // ── 日期範圍快捷 ──────────────────────────
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | '2Y'
@@ -577,6 +580,97 @@ function returnColorClass(val: number | null): string {
   if (val > 0) return 'col-up'
   if (val < 0) return 'col-dn'
   return ''
+}
+
+// ── 籌碼金字塔 ─────────────────────────────────────────────────────
+interface ChipsDistribution {
+  id: number
+  snapshot_id: number
+  tier_rank: number
+  range_label: string
+  holder_count: number | null
+  holder_pct: number | null
+  share_count: number | null
+  share_pct: number | null
+  cum_holder_pct: number | null
+  cum_share_pct: number | null
+}
+
+interface ChipsSnapshot {
+  id: number
+  symbol: string
+  data_date: string
+  scraped_at: string
+  distributions: ChipsDistribution[]
+}
+
+const { data: chipsLatest, refresh: refreshChips } = await useFetch<{ data: ChipsSnapshot | null }>(
+  `/api/chips/${symbol}/latest`,
+  { default: () => ({ data: null }) }
+)
+
+const chipsViewMode = ref<'share' | 'holder'>('share')
+const chipsTriggerState = ref<'idle' | 'running' | 'done' | 'error'>('idle')
+let chipsStatusPoll: ReturnType<typeof setInterval> | null = null
+
+// 依 tier_rank 降序排列（大股東在上方）
+const pyramidRows = computed(() => {
+  const dists = chipsLatest.value?.data?.distributions ?? []
+  return [...dists].sort((a, b) => b.tier_rank - a.tier_rank)
+})
+
+function pyramidBarWidth(dist: ChipsDistribution): number {
+  const dists = chipsLatest.value?.data?.distributions ?? []
+  const maxVal = chipsViewMode.value === 'share'
+    ? Math.max(...dists.map(d => d.share_pct ?? 0), 0.001)
+    : Math.max(...dists.map(d => d.holder_pct ?? 0), 0.001)
+  const val = chipsViewMode.value === 'share' ? (dist.share_pct ?? 0) : (dist.holder_pct ?? 0)
+  return (val / maxVal) * 100
+}
+
+function pyramidBarClass(dist: ChipsDistribution): string {
+  const dists = chipsLatest.value?.data?.distributions ?? []
+  const total = dists.length || 1
+  const ratio = dist.tier_rank / total  // ratio 大 = 大股東
+  if (ratio > 0.67) return 'pyramid-bar--large'
+  if (ratio > 0.33) return 'pyramid-bar--medium'
+  return 'pyramid-bar--small'
+}
+
+async function triggerChips() {
+  if (chipsTriggerState.value === 'running') return
+  chipsTriggerState.value = 'running'
+  try {
+    await $fetch('/api/chips/trigger-single', { method: 'POST', body: { symbol } })
+  } catch (e: any) {
+    if (e?.status !== 409) {
+      chipsTriggerState.value = 'error'
+      setTimeout(() => { chipsTriggerState.value = 'idle' }, 3000)
+      return
+    }
+    // 409 = 已有任務執行中，繼續輪詢
+  }
+  let pollCount = 0
+  chipsStatusPoll = setInterval(async () => {
+    pollCount++
+    if (pollCount > 60) {  // 2 分鐘逾時
+      clearInterval(chipsStatusPoll!)
+      chipsStatusPoll = null
+      chipsTriggerState.value = 'error'
+      setTimeout(() => { chipsTriggerState.value = 'idle' }, 3000)
+      return
+    }
+    try {
+      const s = await $fetch<{ status: string }>('/api/chips/status')
+      if (s.status !== 'running') {
+        clearInterval(chipsStatusPoll!)
+        chipsStatusPoll = null
+        chipsTriggerState.value = s.status === 'completed' ? 'done' : 'error'
+        await refreshChips()
+        setTimeout(() => { chipsTriggerState.value = 'idle' }, 3000)
+      }
+    } catch { /* 忽略輪詢錯誤 */ }
+  }, 2000)
 }
 
 // ── 單檔刷新（SSE）────────────────────────
@@ -994,6 +1088,76 @@ function startRefresh() {
                 </tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ 籌碼金字塔 ══ -->
+      <div class="major-panel chips-panel">
+        <div class="major-topbar">
+          <div class="major-topbar-left">
+            <h2 class="table-heading">籌碼金字塔</h2>
+            <span v-if="chipsLatest?.data" class="table-count">
+              資料日期：{{ chipsLatest.data.data_date.split('T')[0] }}
+            </span>
+            <span v-else class="table-count">持股分佈</span>
+          </div>
+          <div class="chips-topbar-right">
+            <div v-if="chipsLatest?.data" class="range-group">
+              <button
+                class="range-btn"
+                :class="{ 'range-btn--active': chipsViewMode === 'share' }"
+                @click="chipsViewMode = 'share'"
+              >股數%</button>
+              <button
+                class="range-btn"
+                :class="{ 'range-btn--active': chipsViewMode === 'holder' }"
+                @click="chipsViewMode = 'holder'"
+              >人數%</button>
+            </div>
+            <button
+              class="range-btn chips-trigger-btn"
+              :class="{ 'range-btn--active': chipsTriggerState === 'running' }"
+              :disabled="chipsTriggerState === 'running'"
+              @click="triggerChips"
+            >
+              <svg v-if="chipsTriggerState === 'running'" class="chips-spin" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <path d="M21 12a9 9 0 1 1-6.22-8.56"/>
+              </svg>
+              {{ chipsTriggerState === 'running' ? '爬取中…' : chipsTriggerState === 'done' ? '✓ 完成' : chipsTriggerState === 'error' ? '失敗' : chipsLatest?.data ? '重新爬取' : '爬取資料' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="!chipsLatest?.data" class="chart-empty">
+          尚無籌碼金字塔資料，請點「爬取資料」開始抓取。
+        </div>
+        <div v-else class="pyramid-body">
+          <div class="pyramid-rows">
+            <div
+              v-for="dist in pyramidRows"
+              :key="dist.id"
+              class="pyramid-row"
+            >
+              <div class="pyramid-label">{{ dist.range_label }}</div>
+              <div class="pyramid-bar-wrap">
+                <div
+                  class="pyramid-bar"
+                  :class="pyramidBarClass(dist)"
+                  :style="{ width: pyramidBarWidth(dist) + '%' }"
+                ></div>
+              </div>
+              <div class="pyramid-vals">
+                <span class="pyramid-pct">
+                  {{ chipsViewMode === 'share'
+                    ? (dist.share_pct?.toFixed(2) ?? '—')
+                    : (dist.holder_pct?.toFixed(2) ?? '—') }}%
+                </span>
+                <span class="pyramid-count td-muted">
+                  {{ dist.holder_count?.toLocaleString() ?? '—' }} 人
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1866,10 +2030,92 @@ function startRefresh() {
   .major-side:first-child { border-right: none; border-bottom: 1px solid var(--line); }
 }
 
+/* ── Chips Pyramid Panel ────────────────────────────────────── */
+.chips-panel { margin-top: 20px; }
+
+.chips-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chips-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+@keyframes chips-spin { to { transform: rotate(360deg); } }
+.chips-spin { animation: chips-spin 0.9s linear infinite; flex-shrink: 0; }
+
+.pyramid-body { padding: 16px 20px 20px; }
+
+.pyramid-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pyramid-row {
+  display: grid;
+  grid-template-columns: 200px 1fr 180px;
+  align-items: center;
+  gap: 12px;
+  min-height: 26px;
+}
+
+.pyramid-label {
+  font-size: 12.5px;
+  color: var(--t2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  font-family: var(--mono);
+}
+
+.pyramid-bar-wrap {
+  height: 18px;
+  background: var(--s3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.pyramid-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+
+.pyramid-bar--large  { background: color-mix(in oklch, var(--gold) 80%, transparent); }
+.pyramid-bar--medium { background: color-mix(in oklch, var(--blue) 75%, transparent); }
+.pyramid-bar--small  { background: color-mix(in oklch, var(--dn)   70%, transparent); }
+
+.pyramid-vals {
+  display: flex;
+  gap: 16px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  align-items: center;
+}
+
+.pyramid-pct {
+  color: var(--t1);
+  font-weight: 600;
+  min-width: 56px;
+}
+
+.pyramid-count { font-size: 12px; }
+
+@media (max-width: 720px) {
+  .pyramid-row { grid-template-columns: 130px 1fr; }
+  .pyramid-vals { display: none; }
+}
+
 /* ── Winrate Panel ─────────────────────────────────────────── */
 .winrate-panel { margin-top: 24px; }
-
-.wr-list { padding: 0 0 8px; }
 .wr-row  { border-bottom: 1px solid var(--line); }
 .wr-row:last-child { border-bottom: none; }
 
