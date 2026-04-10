@@ -42,8 +42,10 @@ const tags: Tag[] = [
 ]
 
 const { data: screener, pending, error } = await useFetch<TechnicalResult[]>('/api/technical/screener')
-const selectedTag = ref<TagKey | null>(null)
-const searchQuery = ref('')
+const selectedTags = ref<Set<TagKey>>(new Set())
+const searchQuery  = ref('')
+const currentPage  = ref(1)
+const PAGE_SIZE     = 50
 
 const { isDark, isClassic, toggleTheme, setTheme, setStyle } = useAppPrefs()
 const settingsOpen = ref(false)
@@ -66,13 +68,19 @@ const tagCounts = computed(() => {
   }
 })
 
+// 篩完的完整清單（未分頁）
 const filtered = computed<TechnicalResult[]>(() => {
   let list = allStocks.value
 
-  if (selectedTag.value === 'above_week')  list = list.filter(r => r.above_week_high)
-  else if (selectedTag.value === 'above_month') list = list.filter(r => r.above_month_high)
-  else if (selectedTag.value === 'near_week')   list = list.filter(r => r.near_week_high)
-  else if (selectedTag.value === 'near_month')  list = list.filter(r => r.near_month_high)
+  if (selectedTags.value.size > 0) {
+    list = list.filter(r => {
+      if (selectedTags.value.has('above_week')  && r.above_week_high)  return true
+      if (selectedTags.value.has('above_month') && r.above_month_high) return true
+      if (selectedTags.value.has('near_week')   && r.near_week_high)   return true
+      if (selectedTags.value.has('near_month')  && r.near_month_high)  return true
+      return false
+    })
+  }
 
   const q = searchQuery.value.trim().toLowerCase()
   if (q) {
@@ -84,8 +92,25 @@ const filtered = computed<TechnicalResult[]>(() => {
   return list
 })
 
+// 分頁後的資料
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / PAGE_SIZE)))
+const pagedStocks = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE
+  return filtered.value.slice(start, start + PAGE_SIZE)
+})
+
+// 篩選或搜尋變動時重置到第一頁
+watch([selectedTags, searchQuery], () => { currentPage.value = 1 })
+
 function toggleTag(key: TagKey) {
-  selectedTag.value = selectedTag.value === key ? null : key
+  const next = new Set(selectedTags.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  selectedTags.value = next
+}
+
+function clearTags() {
+  selectedTags.value = new Set()
 }
 
 function fmtPrice(v: number) {
@@ -222,58 +247,52 @@ function diffClass(close: number, high: number): string {
       </div>
     </div>
 
-    <!-- ══ Main Layout ══ -->
-    <div class="layout">
+    <!-- ══ Filter Bar ══ -->
+    <div class="filter-bar">
+      <div class="filter-bar__inner">
+        <span class="filter-label">篩選條件</span>
+        <div class="filter-chips">
+          <button
+            v-for="tag in tags"
+            :key="tag.key"
+            class="chip"
+            :class="[`chip--${tag.color}`, { active: selectedTags.has(tag.key) }]"
+            @click="toggleTag(tag.key)"
+          >
+            {{ tag.label }}
+            <span class="chip-count">{{ tagCounts[tag.key] }}</span>
+          </button>
+        </div>
+        <button v-if="selectedTags.size > 0" class="clear-btn" @click="clearTags()">清除</button>
+      </div>
+      <div v-if="selectedTags.size > 0" class="filter-desc-bar">
+        <div class="filter-bar__inner">
+          <span
+            v-for="tag in tags.filter(t => selectedTags.has(t.key))"
+            :key="tag.key"
+            class="filter-desc-item"
+            :class="`filter-desc--${tag.color}`"
+          >
+            {{ tag.label }}：{{ tag.desc }}
+          </span>
+        </div>
+      </div>
+    </div>
 
-      <!-- ── Tag Sidebar ── -->
-      <aside class="sidebar">
-        <section class="tag-section">
-          <div class="tag-heading">
-            <span>篩選條件</span>
-            <button v-if="selectedTag" class="clear-btn" @click="selectedTag = null">清除</button>
-          </div>
-          <ul class="tag-list">
-            <li>
-              <button
-                class="tag-item tag-item--all"
-                :class="{ active: !selectedTag }"
-                @click="selectedTag = null"
-              >
-                <span class="tag-label">全部股票</span>
-                <span class="tag-count">{{ allStocks.length }}</span>
-              </button>
-            </li>
-            <li v-for="tag in tags" :key="tag.key">
-              <button
-                class="tag-item"
-                :class="[`tag-item--${tag.color}`, { active: selectedTag === tag.key }]"
-                @click="toggleTag(tag.key)"
-              >
-                <span class="tag-label">{{ tag.label }}</span>
-                <span class="tag-count">{{ tagCounts[tag.key] }}</span>
-              </button>
-            </li>
-          </ul>
-          <div v-if="selectedTag" class="tag-desc">
-            {{ tags.find(t => t.key === selectedTag)?.desc }}
-          </div>
-        </section>
-      </aside>
-
-      <!-- ── Stock Table ── -->
-      <main class="content">
-        <div v-if="pending" class="loading-state">
-          <span class="loading-spin">◌</span>
-          <span>載入中…</span>
-        </div>
-        <div v-else-if="error" class="error-state">
-          ⚠ 載入失敗，請確認後端服務是否正常
-        </div>
-        <div v-else-if="filtered.length === 0" class="empty-state">
-          <span class="empty-icon">—</span>
-          <span>{{ searchQuery ? '無符合搜尋條件的股票' : '目前無符合此篩選條件的股票' }}</span>
-        </div>
-        <div v-else class="table-wrap">
+    <!-- ══ Content ══ -->
+    <div class="content">
+      <div v-if="pending" class="loading-state">
+        <span class="loading-spin">◌</span>
+        <span>載入中…</span>
+      </div>
+      <div v-else-if="error" class="error-state">
+        ⚠ 載入失敗，請確認後端服務是否正常
+      </div>
+      <div v-else-if="filtered.length === 0" class="empty-state">
+        <span>{{ searchQuery ? '無符合搜尋條件的股票' : '目前無符合此篩選條件的股票' }}</span>
+      </div>
+      <template v-else>
+        <div class="table-wrap">
           <table class="stock-table">
             <thead>
               <tr>
@@ -289,7 +308,7 @@ function diffClass(close: number, high: number): string {
             </thead>
             <tbody>
               <tr
-                v-for="stock in filtered"
+                v-for="stock in pagedStocks"
                 :key="stock.symbol"
                 class="stock-row"
                 @click="navigateTo(`/stocks/${stock.symbol}`)"
@@ -315,7 +334,48 @@ function diffClass(close: number, high: number): string {
             </tbody>
           </table>
         </div>
-      </main>
+
+        <!-- ── Pagination ── -->
+        <div v-if="totalPages > 1" class="pagination">
+          <button
+            class="pg-btn"
+            :disabled="currentPage === 1"
+            @click="currentPage = 1"
+          >«</button>
+          <button
+            class="pg-btn"
+            :disabled="currentPage === 1"
+            @click="currentPage--"
+          >‹</button>
+          <template v-for="p in totalPages" :key="p">
+            <button
+              v-if="p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2"
+              class="pg-btn"
+              :class="{ active: p === currentPage }"
+              @click="currentPage = p"
+            >{{ p }}</button>
+            <span
+              v-else-if="p === 2 && currentPage > 4"
+              class="pg-ellipsis"
+            >…</span>
+            <span
+              v-else-if="p === totalPages - 1 && currentPage < totalPages - 3"
+              class="pg-ellipsis"
+            >…</span>
+          </template>
+          <button
+            class="pg-btn"
+            :disabled="currentPage === totalPages"
+            @click="currentPage++"
+          >›</button>
+          <button
+            class="pg-btn"
+            :disabled="currentPage === totalPages"
+            @click="currentPage = totalPages"
+          >»</button>
+          <span class="pg-info">第 {{ currentPage }} / {{ totalPages }} 頁，共 {{ filtered.length }} 筆</span>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -474,70 +534,70 @@ function diffClass(close: number, high: number): string {
 .search-input:focus { border-color: var(--blue); }
 .search-input::placeholder { color: var(--muted); }
 
-/* ── Layout ────────────────────────────────────── */
-.layout {
-  display: flex;
+/* ── Filter Bar ──────────────────────────────── */
+.filter-bar {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.filter-bar__inner {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 0.5rem; max-width: 1400px; margin: 0 auto;
+  padding: 10px 1.5rem;
+}
+.filter-label {
+  font-size: 0.72rem; color: var(--muted);
+  font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; white-space: nowrap;
+  margin-right: 4px;
+}
+.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 99px;
+  border: 1px solid var(--border); background: none;
+  color: var(--muted); font-size: 0.82rem; font-family: inherit;
+  cursor: pointer; white-space: nowrap; transition: all 0.15s;
+}
+.chip:hover { border-color: var(--text); color: var(--text); }
+.chip-count {
+  font-size: 0.7rem; padding: 0 5px; border-radius: 99px;
+  background: var(--border); color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.chip--green.active  { border-color: var(--green);  color: var(--green);  background: oklch(from var(--green)  l c h / 0.1); }
+.chip--blue.active   { border-color: var(--blue);   color: var(--blue);   background: oklch(from var(--blue)   l c h / 0.1); }
+.chip--amber.active  { border-color: var(--amber);  color: var(--amber);  background: oklch(from var(--amber)  l c h / 0.1); }
+.chip--purple.active { border-color: var(--purple); color: var(--purple); background: oklch(from var(--purple) l c h / 0.1); }
+.chip--green.active  .chip-count { background: oklch(from var(--green)  l c h / 0.2); color: var(--green);  }
+.chip--blue.active   .chip-count { background: oklch(from var(--blue)   l c h / 0.2); color: var(--blue);   }
+.chip--amber.active  .chip-count { background: oklch(from var(--amber)  l c h / 0.2); color: var(--amber);  }
+.chip--purple.active .chip-count { background: oklch(from var(--purple) l c h / 0.2); color: var(--purple); }
+.clear-btn {
+  background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: 0.78rem; padding: 4px 8px;
+  border-radius: 6px; font-family: inherit; transition: color 0.15s;
+}
+.clear-btn:hover { color: var(--text); }
+.filter-desc-bar { border-top: 1px solid oklch(from var(--border) l c h / 0.5); }
+.filter-desc-item {
+  font-size: 0.75rem; color: var(--muted);
+}
+.filter-desc-item + .filter-desc-item::before {
+  content: '·';
+  margin: 0 8px;
+  color: var(--border);
+}
+.filter-desc--green  { color: var(--green);  }
+.filter-desc--blue   { color: var(--blue);   }
+.filter-desc--amber  { color: var(--amber);  }
+.filter-desc--purple { color: var(--purple); }
+
+/* ── Content ────────────────────────────────────── */
+.content {
   max-width: 1400px;
   margin: 0 auto;
   padding: 1.5rem;
-  gap: 1.5rem;
-  align-items: flex-start;
 }
-
-/* ── Sidebar ────────────────────────────────────── */
-.sidebar {
-  width: 220px;
-  flex-shrink: 0;
-  position: sticky;
-  top: 1.5rem;
-}
-.tag-section {}
-.tag-heading {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 0.72rem; color: var(--muted); font-weight: 600;
-  letter-spacing: 0.05em; text-transform: uppercase;
-  padding: 0 0 8px;
-}
-.clear-btn {
-  background: none; border: none; cursor: pointer;
-  color: var(--blue); font-size: 0.72rem; padding: 0;
-  font-family: inherit; transition: opacity 0.15s;
-}
-.clear-btn:hover { opacity: 0.7; }
-.tag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
-.tag-item {
-  width: 100%; display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 10px; border-radius: 8px;
-  border: 1px solid transparent; background: none;
-  color: var(--muted); font-size: 0.84rem; font-family: inherit;
-  cursor: pointer; text-align: left; transition: all 0.15s;
-}
-.tag-item:hover { color: var(--text); background: var(--surface); border-color: var(--border); }
-.tag-item.active { color: var(--text); background: var(--surface); border-color: var(--border); }
-.tag-item--all.active { border-color: var(--blue); color: var(--blue); }
-.tag-item--green.active { border-color: var(--green); color: var(--green); background: oklch(from var(--green) l c h / 0.08); }
-.tag-item--blue.active  { border-color: var(--blue);  color: var(--blue);  background: oklch(from var(--blue)  l c h / 0.08); }
-.tag-item--amber.active { border-color: var(--amber); color: var(--amber); background: oklch(from var(--amber) l c h / 0.08); }
-.tag-item--purple.active{ border-color: var(--purple);color: var(--purple);background: oklch(from var(--purple) l c h / 0.08); }
-.tag-label { font-weight: 500; }
-.tag-count {
-  font-size: 0.72rem; padding: 1px 6px;
-  border-radius: 99px; background: var(--border);
-  color: var(--muted); font-variant-numeric: tabular-nums;
-}
-.tag-desc {
-  margin-top: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  font-size: 0.78rem;
-  color: var(--muted);
-  line-height: 1.5;
-}
-
-/* ── Content ────────────────────────────────────── */
-.content { flex: 1; min-width: 0; }
 
 .loading-state,
 .error-state,
@@ -609,11 +669,28 @@ function diffClass(close: number, high: number): string {
 .signal--amber  { background: oklch(from var(--amber)  l c h / 0.18); color: var(--amber);  border: 1px solid oklch(from var(--amber)  l c h / 0.35); }
 .signal--purple { background: oklch(from var(--purple) l c h / 0.18); color: var(--purple); border: 1px solid oklch(from var(--purple) l c h / 0.35); }
 
+/* ── Pagination ─────────────────────────────── */
+.pagination {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 4px; margin-top: 1rem;
+}
+.pg-btn {
+  min-width: 32px; height: 32px; padding: 0 8px;
+  border-radius: 7px; border: 1px solid var(--border);
+  background: none; color: var(--muted);
+  font-size: 0.82rem; font-family: inherit; cursor: pointer;
+  transition: all 0.15s;
+}
+.pg-btn:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.pg-btn.active { border-color: var(--blue); color: var(--blue); background: oklch(from var(--blue) l c h / 0.1); font-weight: 600; }
+.pg-btn:disabled { opacity: 0.3; cursor: default; }
+.pg-ellipsis { padding: 0 4px; color: var(--muted); font-size: 0.82rem; line-height: 32px; }
+.pg-info { margin-left: 8px; font-size: 0.78rem; color: var(--muted); }
+
 /* ── Responsive ──────────────────────────────── */
 @media (max-width: 700px) {
-  .layout { flex-direction: column; padding: 1rem; }
-  .sidebar { width: 100%; position: static; }
-  .tag-list { flex-direction: row; flex-wrap: wrap; }
-  .tag-item { width: auto; }
+  .content { padding: 1rem; }
+  .filter-bar__inner { padding: 8px 1rem; }
+  .toolbar__inner { padding: 0 1rem; }
 }
 </style>
