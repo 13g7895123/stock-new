@@ -42,10 +42,12 @@ const tags: Tag[] = [
 ]
 
 const { data: screener, pending, error } = await useFetch<TechnicalResult[]>('/api/technical/screener')
-const selectedTags = ref<Set<TagKey>>(new Set())
-const searchQuery  = ref('')
-const currentPage  = ref(1)
-const PAGE_SIZE     = 50
+const selectedTags    = ref<Set<TagKey>>(new Set())
+const searchQuery     = ref('')
+const currentPage     = ref(1)
+const filterMode      = ref<'or' | 'and'>('or')
+const pageSize        = ref(10)
+const pageSizeOptions = [10, 25, 50, 100]
 
 const { isDark, isClassic, toggleTheme, setTheme, setStyle } = useAppPrefs()
 const settingsOpen = ref(false)
@@ -74,11 +76,12 @@ const filtered = computed<TechnicalResult[]>(() => {
 
   if (selectedTags.value.size > 0) {
     list = list.filter(r => {
-      if (selectedTags.value.has('above_week')  && r.above_week_high)  return true
-      if (selectedTags.value.has('above_month') && r.above_month_high) return true
-      if (selectedTags.value.has('near_week')   && r.near_week_high)   return true
-      if (selectedTags.value.has('near_month')  && r.near_month_high)  return true
-      return false
+      const checks: boolean[] = []
+      if (selectedTags.value.has('above_week'))  checks.push(r.above_week_high)
+      if (selectedTags.value.has('above_month')) checks.push(r.above_month_high)
+      if (selectedTags.value.has('near_week'))   checks.push(r.near_week_high)
+      if (selectedTags.value.has('near_month'))  checks.push(r.near_month_high)
+      return filterMode.value === 'and' ? checks.every(Boolean) : checks.some(Boolean)
     })
   }
 
@@ -93,14 +96,15 @@ const filtered = computed<TechnicalResult[]>(() => {
 })
 
 // 分頁後的資料
-const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / PAGE_SIZE)))
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value)))
 const pagedStocks = computed(() => {
-  const start = (currentPage.value - 1) * PAGE_SIZE
-  return filtered.value.slice(start, start + PAGE_SIZE)
+  const start = (currentPage.value - 1) * pageSize.value
+  return filtered.value.slice(start, start + pageSize.value)
 })
 
 // 篩選或搜尋變動時重置到第一頁
-watch([selectedTags, searchQuery], () => { currentPage.value = 1 })
+watch([selectedTags, searchQuery, filterMode], () => { currentPage.value = 1 })
+watch(pageSize, () => { currentPage.value = 1 })
 
 function toggleTag(key: TagKey) {
   const next = new Set(selectedTags.value)
@@ -251,6 +255,10 @@ function diffClass(close: number, high: number): string {
     <div class="filter-bar">
       <div class="filter-bar__inner">
         <span class="filter-label">篩選條件</span>
+        <div class="mode-toggle" :class="{ disabled: selectedTags.size < 2 }">
+          <button class="mode-btn" :class="{ active: filterMode === 'or' }" @click="filterMode = 'or'">OR</button>
+          <button class="mode-btn" :class="{ active: filterMode === 'and' }" @click="filterMode = 'and'">AND</button>
+        </div>
         <div class="filter-chips">
           <button
             v-for="tag in tags"
@@ -335,45 +343,36 @@ function diffClass(close: number, high: number): string {
           </table>
         </div>
 
-        <!-- ── Pagination ── -->
-        <div v-if="totalPages > 1" class="pagination">
-          <button
-            class="pg-btn"
-            :disabled="currentPage === 1"
-            @click="currentPage = 1"
-          >«</button>
-          <button
-            class="pg-btn"
-            :disabled="currentPage === 1"
-            @click="currentPage--"
-          >‹</button>
-          <template v-for="p in totalPages" :key="p">
-            <button
-              v-if="p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2"
-              class="pg-btn"
-              :class="{ active: p === currentPage }"
-              @click="currentPage = p"
-            >{{ p }}</button>
-            <span
-              v-else-if="p === 2 && currentPage > 4"
-              class="pg-ellipsis"
-            >…</span>
-            <span
-              v-else-if="p === totalPages - 1 && currentPage < totalPages - 3"
-              class="pg-ellipsis"
-            >…</span>
-          </template>
-          <button
-            class="pg-btn"
-            :disabled="currentPage === totalPages"
-            @click="currentPage++"
-          >›</button>
-          <button
-            class="pg-btn"
-            :disabled="currentPage === totalPages"
-            @click="currentPage = totalPages"
-          >»</button>
-          <span class="pg-info">第 {{ currentPage }} / {{ totalPages }} 頁，共 {{ filtered.length }} 筆</span>
+        <!-- ── Pagination Row ── -->
+        <div class="pagination-row">
+          <div class="pagination">
+            <template v-if="totalPages > 1">
+              <button class="pg-btn" :disabled="currentPage === 1" @click="currentPage = 1">«</button>
+              <button class="pg-btn" :disabled="currentPage === 1" @click="currentPage--">‹</button>
+              <template v-for="p in totalPages" :key="p">
+                <button
+                  v-if="p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2"
+                  class="pg-btn"
+                  :class="{ active: p === currentPage }"
+                  @click="currentPage = p"
+                >{{ p }}</button>
+                <span v-else-if="p === 2 && currentPage > 4" class="pg-ellipsis">…</span>
+                <span v-else-if="p === totalPages - 1 && currentPage < totalPages - 3" class="pg-ellipsis">…</span>
+              </template>
+              <button class="pg-btn" :disabled="currentPage === totalPages" @click="currentPage++">›</button>
+              <button class="pg-btn" :disabled="currentPage === totalPages" @click="currentPage = totalPages">»</button>
+            </template>
+            <span class="pg-info">
+              <template v-if="totalPages > 1">第 {{ currentPage }} / {{ totalPages }} 頁，</template>共 {{ filtered.length }} 筆
+            </span>
+          </div>
+          <div class="pg-size">
+            <span class="pg-size-label">每頁</span>
+            <select v-model="pageSize" class="pg-size-select">
+              <option v-for="n in pageSizeOptions" :key="n" :value="n">{{ n }}</option>
+            </select>
+            <span class="pg-size-label">筆</span>
+          </div>
         </div>
       </template>
     </div>
@@ -669,10 +668,34 @@ function diffClass(close: number, high: number): string {
 .signal--amber  { background: oklch(from var(--amber)  l c h / 0.18); color: var(--amber);  border: 1px solid oklch(from var(--amber)  l c h / 0.35); }
 .signal--purple { background: oklch(from var(--purple) l c h / 0.18); color: var(--purple); border: 1px solid oklch(from var(--purple) l c h / 0.35); }
 
+/* ── AND/OR Toggle ──────────────────────────── */
+.mode-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.mode-toggle.disabled { opacity: 0.35; pointer-events: none; }
+.mode-btn {
+  background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: 0.72rem; font-weight: 600;
+  padding: 3px 9px; font-family: inherit;
+  letter-spacing: 0.04em; transition: all 0.15s;
+  line-height: 1;
+}
+.mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+.mode-btn:hover { color: var(--text); background: oklch(from var(--border) l c h / 0.4); }
+.mode-btn.active { background: oklch(from var(--blue) l c h / 0.12); color: var(--blue); }
+
 /* ── Pagination ─────────────────────────────── */
+.pagination-row {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 0.75rem; margin-top: 1rem;
+}
 .pagination {
   display: flex; align-items: center; flex-wrap: wrap;
-  gap: 4px; margin-top: 1rem;
+  gap: 4px;
 }
 .pg-btn {
   min-width: 32px; height: 32px; padding: 0 8px;
@@ -685,7 +708,21 @@ function diffClass(close: number, high: number): string {
 .pg-btn.active { border-color: var(--blue); color: var(--blue); background: oklch(from var(--blue) l c h / 0.1); font-weight: 600; }
 .pg-btn:disabled { opacity: 0.3; cursor: default; }
 .pg-ellipsis { padding: 0 4px; color: var(--muted); font-size: 0.82rem; line-height: 32px; }
-.pg-info { margin-left: 8px; font-size: 0.78rem; color: var(--muted); }
+.pg-info { margin-left: 4px; font-size: 0.78rem; color: var(--muted); }
+.pg-size {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.78rem; color: var(--muted);
+}
+.pg-size-label { white-space: nowrap; }
+.pg-size-select {
+  height: 28px; padding: 0 6px;
+  border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text);
+  font-size: 0.78rem; font-family: inherit;
+  cursor: pointer; outline: none;
+  transition: border-color 0.15s;
+}
+.pg-size-select:focus { border-color: var(--blue); }
 
 /* ── Responsive ──────────────────────────────── */
 @media (max-width: 700px) {
