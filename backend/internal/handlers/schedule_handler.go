@@ -48,6 +48,12 @@ var scheduleTaskCatalog = []ScheduleTaskMeta{
 		Description: "爬取各券商分點的買賣超明細（可設定 days 參數）",
 		HasParams:   true,
 	},
+	{
+		ID:          "institutional_trading",
+		Label:       "三大法人買賣超",
+		Description: "爬取 TWSE/TPEX 每日外資、投信、自營商買賣超資料（可設定 days 參數）",
+		HasParams:   true,
+	},
 }
 
 // ─── Handler ─────────────────────────────────────────────────────────────────
@@ -272,6 +278,15 @@ func dispatchTask(db *gorm.DB, taskID, params string) error {
 			p.Days = 1
 		}
 		return TriggerMajorCron(db, p.Days)
+	case "institutional_trading":
+		var p struct {
+			Days int `json:"days"`
+		}
+		_ = json.Unmarshal([]byte(params), &p)
+		if p.Days <= 0 {
+			p.Days = 1
+		}
+		return TriggerInstitutionalCron(db, p.Days)
 	}
 	return fmt.Errorf("unknown task: %s", taskID)
 }

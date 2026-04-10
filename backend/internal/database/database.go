@@ -38,6 +38,8 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 		&models.BrokerTradeEvent{},
 		&models.WinrateSyncJob{},
 		&models.TaskSchedule{},
+		&models.InstitutionalSyncJob{},
+		&models.InstitutionalTrading{},
 	); err != nil {
 		return nil, err
 	}
