@@ -243,12 +243,6 @@ watch(
   { immediate: true },
 )
 
-onBeforeUnmount(() => {
-  stopChipsPolling()
-  stopPriceSyncPolling()
-  stopMajorPolling()
-})
-
 // ── 全股票歷史日K批次爬取 ──────────────────────────────
 interface PriceSyncStatus {
   status: 'never' | 'running' | 'completed' | 'failed'
@@ -494,7 +488,137 @@ watch(
   { immediate: true },
 )
 
-// ── 單股測試 Modal ─────────────────────────────────────────────
+// ── 三大法人爬取 ────────────────────────────────────────────────
+interface InstitutionalStatus {
+  status: 'never' | 'running' | 'completed' | 'failed'
+  started_at?: string
+  completed_at?: string
+  total?: number
+  success?: number
+  fail?: number
+  message?: string
+}
+
+interface MarketSummaryRow {
+  market: string
+  date: string
+  foreign_net: number
+  trust_net: number
+  dealer_net: number
+  total_net: number
+  stock_count: number
+}
+
+interface MarketSummaryResponse {
+  date: string | null
+  data: MarketSummaryRow[]
+}
+
+const { data: institutionalStatus, refresh: refreshInstitutional } = await useFetch<InstitutionalStatus>('/api/institutional/status')
+const { data: marketSummary, refresh: refreshMarketSummary } = await useFetch<MarketSummaryResponse>('/api/institutional/summary')
+
+const institutionalTriggering = ref(false)
+const institutionalError = ref('')
+let institutionalPollTimer: ReturnType<typeof setInterval> | null = null
+
+function startInstitutionalPolling() {
+  if (institutionalPollTimer) return
+  institutionalPollTimer = setInterval(() => {
+    refreshInstitutional()
+    refreshMarketSummary()
+  }, 3000)
+}
+function stopInstitutionalPolling() {
+  if (!institutionalPollTimer) return
+  clearInterval(institutionalPollTimer)
+  institutionalPollTimer = null
+}
+
+async function triggerInstitutional() {
+  if (institutionalTriggering.value) return
+  institutionalTriggering.value = true
+  institutionalError.value = ''
+  try {
+    await $fetch('/api/institutional/trigger', { method: 'POST', body: { days: 1 } })
+    await refreshInstitutional()
+    startInstitutionalPolling()
+  } catch (err: unknown) {
+    const e = err as { response?: { status?: number; _data?: { error?: string } }; data?: { error?: string } }
+    if (e?.response?.status === 409) {
+      institutionalError.value = '已有作業執行中'
+      startInstitutionalPolling()
+    } else {
+      institutionalError.value = e?.response?._data?.error ?? e?.data?.error ?? '啟動失敗'
+    }
+  } finally {
+    institutionalTriggering.value = false
+  }
+}
+
+const institutionalBadgeText = computed(() => {
+  const s = institutionalStatus.value?.status
+  if (s === 'running') return '爬取中…'
+  if (s === 'completed') return '已完成'
+  if (s === 'failed') return '作業失敗'
+  return '尚未執行'
+})
+
+const institutionalSummaryText = computed(() => {
+  const s = institutionalStatus.value?.status
+  const total = institutionalStatus.value?.total ?? 0
+  const success = institutionalStatus.value?.success ?? 0
+  const fail = institutionalStatus.value?.fail ?? 0
+  if (s === 'running') return institutionalStatus.value?.message || `進行中…`
+  if (s === 'completed') return `共 ${total} 天，成功 ${success}，失敗 ${fail}。`
+  if (s === 'failed') return institutionalStatus.value?.message || '作業中斷，請重新觸發。'
+  return '每日爬取 TWSE/TPEX 三大法人（外資、投信、自營商）買賣超資料。'
+})
+
+const institutionalCompletedAt = computed(() => {
+  if (!institutionalStatus.value?.completed_at) return '—'
+  return new Date(institutionalStatus.value.completed_at).toLocaleString('zh-TW', {
+    year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+})
+
+const institutionalProcessed = computed(() =>
+  (institutionalStatus.value?.success ?? 0) + (institutionalStatus.value?.fail ?? 0)
+)
+
+const institutionalProgressPct = computed(() => {
+  const total = institutionalStatus.value?.total ?? 0
+  if (!total) return 0
+  return Math.min(100, Math.round((institutionalProcessed.value / total) * 100))
+})
+
+// 市場概覽：取 TWSE/TPEX 各一列
+const twseSummary = computed(() => marketSummary.value?.data?.find(r => r.market === 'TWSE') ?? null)
+const tpexSummary = computed(() => marketSummary.value?.data?.find(r => r.market === 'TPEX') ?? null)
+const summaryDate = computed(() => marketSummary.value?.date ?? null)
+
+function fmtNet(n: number): string {
+  const abs = Math.abs(n)
+  const sign = n >= 0 ? '+' : '-'
+  if (abs >= 100_000_000) return `${sign}${(abs / 100_000_000).toFixed(2)} 億股`
+  if (abs >= 10_000) return `${sign}${(abs / 10_000).toFixed(0)} 萬股`
+  return `${sign}${abs.toLocaleString()} 股`
+}
+
+watch(
+  () => institutionalStatus.value?.status,
+  (status) => {
+    if (status === 'running') startInstitutionalPolling()
+    else stopInstitutionalPolling()
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  stopChipsPolling()
+  stopPriceSyncPolling()
+  stopMajorPolling()
+  stopInstitutionalPolling()
+})
 interface TestStep {
   id: number
   text: string
@@ -1301,11 +1425,115 @@ const settingsOpen = ref(false)
           <p v-if="majorError" class="chips-err">⚠ {{ majorError }}</p>
         </article>
 
+        <!-- Card 10: Institutional Trading (2 cols) -->
+        <article class="card card--chips">
+          <p class="card-eyebrow">Institutional Trading · 三大法人買賣超</p>
+          <div class="chips-body">
+            <div class="chips-fresh-badge" :class="{
+              'chips-fresh-badge--ok':    institutionalStatus?.status === 'completed',
+              'chips-fresh-badge--stale': institutionalStatus?.status === 'running',
+              'chips-fresh-badge--fail':  institutionalStatus?.status === 'failed',
+            }">
+              <span class="pip pip--lg" :class="{
+                'pip--ok':   institutionalStatus?.status === 'completed',
+                'pip--busy': institutionalStatus?.status === 'running',
+                'pip--fail': institutionalStatus?.status === 'failed',
+                'pip--warn': !institutionalStatus || institutionalStatus?.status === 'never',
+              }" />
+              <span>{{ institutionalBadgeText }}</span>
+            </div>
+            <div class="chips-summary">
+              <p class="chips-summary__title">
+                <template v-if="institutionalStatus?.status === 'running'">正在爬取三大法人資料</template>
+                <template v-else-if="institutionalStatus?.status === 'completed'">上次三大法人爬取已完成</template>
+                <template v-else-if="institutionalStatus?.status === 'failed'">上次三大法人爬取失敗</template>
+                <template v-else>尚未執行三大法人爬取</template>
+              </p>
+              <p class="chips-summary__text">{{ institutionalSummaryText }}</p>
+            </div>
+            <div class="chips-meta">
+              <template v-if="institutionalStatus && institutionalStatus.status !== 'never'">
+                <div class="meta-row">
+                  <span class="meta-key">成功 / 總計</span>
+                  <span class="meta-val">{{ institutionalStatus.success ?? 0 }} / {{ institutionalStatus.total ?? 0 }}</span>
+                </div>
+              </template>
+              <div v-if="institutionalStatus && institutionalStatus.status !== 'running' && institutionalStatus.status !== 'never'" class="meta-row">
+                <span class="meta-key">完成時間</span>
+                <span class="meta-val">{{ institutionalCompletedAt }}</span>
+              </div>
+            </div>
+            <div v-if="institutionalStatus?.status === 'running'" class="chips-progress">
+              <div class="chips-progress__track">
+                <div class="chips-progress__fill" :style="{ width: `${institutionalProgressPct}%` }" />
+              </div>
+              <p class="chips-progress__text">{{ institutionalStatus?.message || '爬取進行中…' }}</p>
+            </div>
+          </div>
+          <button
+            class="action-btn"
+            :class="{ 'action-btn--busy': institutionalTriggering || institutionalStatus?.status === 'running' }"
+            :disabled="institutionalTriggering || institutionalStatus?.status === 'running'"
+            @click="triggerInstitutional"
+          >{{ institutionalTriggering || institutionalStatus?.status === 'running' ? '爬取中…' : '觸發今日爬取' }}</button>
+          <p v-if="institutionalError" class="chips-err">⚠ {{ institutionalError }}</p>
+        </article>
+
       </div>
     </section>
 
     <!-- ══ Main ══ -->
     <main v-else class="main">
+
+      <!-- ── 三大法人大盤概覽 Banner ── -->
+      <section class="market-banner">
+        <div class="mb-head">
+          <span class="mb-label">三大法人 · 大盤概覽</span>
+          <span v-if="summaryDate" class="mb-date">{{ summaryDate }}</span>
+          <span v-else class="mb-date mb-date--none">尚無資料，請先觸發爬取</span>
+          <button class="mb-refresh" :disabled="institutionalTriggering || institutionalStatus?.status === 'running'" @click="triggerInstitutional" :title="institutionalStatus?.status === 'running' ? '爬取中…' : '觸發今日爬取'">
+            <svg v-if="institutionalStatus?.status === 'running'" width="13" height="13" viewBox="0 0 14 14" fill="none" class="mb-spin">
+              <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5" stroke-dasharray="18 10" />
+            </svg>
+            <svg v-else width="13" height="13" viewBox="0 0 14 14" fill="none">
+              <path d="M12 7A5 5 0 1 1 7 2c1.4 0 2.6.56 3.54 1.46L13 1v4H9l1.77-1.77A3.5 3.5 0 1 0 10.5 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            {{ institutionalStatus?.status === 'running' ? '爬取中' : '更新' }}
+          </button>
+        </div>
+        <div v-if="summaryDate" class="mb-markets">
+          <div v-for="row in [twseSummary, tpexSummary]" :key="row?.market" class="mb-market" v-if="row">
+            <span class="mb-mkt-tag">{{ row.market === 'TWSE' ? '上市' : '上櫃' }}</span>
+            <div class="mb-stats">
+              <div class="mb-stat">
+                <span class="mb-stat-label">外資</span>
+                <span class="mb-stat-val" :class="row.foreign_net >= 0 ? 'val-up' : 'val-dn'">{{ fmtNet(row.foreign_net) }}</span>
+              </div>
+              <div class="mb-stat">
+                <span class="mb-stat-label">投信</span>
+                <span class="mb-stat-val" :class="row.trust_net >= 0 ? 'val-up' : 'val-dn'">{{ fmtNet(row.trust_net) }}</span>
+              </div>
+              <div class="mb-stat">
+                <span class="mb-stat-label">自營商</span>
+                <span class="mb-stat-val" :class="row.dealer_net >= 0 ? 'val-up' : 'val-dn'">{{ fmtNet(row.dealer_net) }}</span>
+              </div>
+              <div class="mb-stat mb-stat--total">
+                <span class="mb-stat-label">合計</span>
+                <span class="mb-stat-val" :class="row.total_net >= 0 ? 'val-up' : 'val-dn'">{{ fmtNet(row.total_net) }}</span>
+              </div>
+              <div class="mb-stat">
+                <span class="mb-stat-label">個股數</span>
+                <span class="mb-stat-val" style="color: var(--t2)">{{ row.stock_count.toLocaleString() }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-if="!twseSummary && !tpexSummary" class="mb-empty">當日無資料</div>
+        </div>
+        <div v-else class="mb-empty-hint">
+          點擊「更新」按鈕觸發今日三大法人資料爬取，完成後此處將顯示大盤與櫃買概覽。
+        </div>
+      </section>
+
       <div class="bento">
 
         <!-- ── Overview (2 cols) ── -->
@@ -1507,26 +1735,17 @@ const settingsOpen = ref(false)
             </button>
           </div>
 
-          <div class="chips-actions">
+          <div class="card-footer">
             <button
               class="action-btn"
               :class="{ busy: chipsTriggering || chipsStatus?.status === 'running' }"
               :disabled="chipsTriggering || chipsStatus?.status === 'running'"
               @click="triggerChips"
             >{{ chipsTriggering || chipsStatus?.status === 'running' ? '爬取中…' : '手動觸發爬取' }}</button>
-
-            <div v-if="chipsShouldShowSecondaryActions" class="sec-row">
-              <button
-                v-if="chipsCanRetry"
-                class="sec-btn sec-retry"
-                :disabled="chipsTriggering || chipsStatus?.status === 'running'"
-                @click="triggerChips"
-              >再試一次</button>
-              <NuxtLink to="/stocks" class="sec-btn sec-link">查看股票列表</NuxtLink>
-            </div>
+            <span v-if="chipsStatus?.is_fresh" class="status-icon status-ok" title="本週資料已是最新">✓</span>
+            <span v-else-if="chipsStatus?.status === 'failed'" class="status-icon status-fail" title="上次執行失敗">✕</span>
+            <span v-if="chipsError" class="chips-err">{{ chipsError }}</span>
           </div>
-
-          <p v-if="chipsError" class="chips-err">{{ chipsError }}</p>
         </article>
 
         <!-- ── Price Sync All (2 cols) ── -->
@@ -1588,23 +1807,17 @@ const settingsOpen = ref(false)
             </button>
           </div>
 
-          <div class="chips-actions">
+          <div class="card-footer">
             <button
               class="action-btn"
               :class="{ busy: priceSyncTriggering || priceSyncStatus?.status === 'running' }"
               :disabled="priceSyncTriggering || priceSyncStatus?.status === 'running'"
               @click="triggerPriceSync"
             >{{ priceSyncTriggering || priceSyncStatus?.status === 'running' ? '回填中…' : '全量歷史回填' }}</button>
-            <div v-if="priceSyncStatus?.status === 'completed' || priceSyncStatus?.status === 'failed'" class="sec-row">
-              <button
-                class="sec-btn sec-retry"
-                :disabled="priceSyncTriggering || priceSyncStatus?.status === 'running'"
-                @click="triggerPriceSync"
-              >再次執行</button>
-            </div>
+            <span v-if="priceSyncStatus?.status === 'completed'" class="status-icon status-ok" title="上次執行成功">✓</span>
+            <span v-else-if="priceSyncStatus?.status === 'failed'" class="status-icon status-fail" title="上次執行失敗">✕</span>
+            <span v-if="priceSyncError" class="chips-err">{{ priceSyncError }}</span>
           </div>
-
-          <p v-if="priceSyncError" class="chips-err">{{ priceSyncError }}</p>
         </article>
 
         <!-- ── Technical Screener (1 col) ── -->
@@ -1686,19 +1899,78 @@ const settingsOpen = ref(false)
             </select>
           </div>
 
-          <div class="chips-actions">
+          <div class="card-footer">
             <button
               class="action-btn"
               :class="{ busy: majorTriggering || majorStatus?.status === 'running' }"
               :disabled="majorTriggering || majorStatus?.status === 'running'"
               @click="triggerMajor"
-            >{{ majorTriggering || majorStatus?.status === 'running' ? '爬取中…' : '觸發主力進出爬取' }}</button>
-            <div v-if="majorStatus?.status === 'completed' || majorStatus?.status === 'failed'" class="sec-row">
-              <button class="sec-btn sec-retry" :disabled="majorTriggering" @click="triggerMajor">再試一次</button>
+            >{{ majorTriggering || majorStatus?.status === 'running' ? '爬取中…' : '觸發爬取' }}</button>
+            <span v-if="majorStatus?.status === 'completed'" class="status-icon status-ok" title="上次執行成功">✓</span>
+            <span v-else-if="majorStatus?.status === 'failed'" class="status-icon status-fail" title="上次執行失敗">✕</span>
+            <span v-if="majorError" class="chips-err">{{ majorError }}</span>
+          </div>
+        </article>
+
+        <!-- ── Institutional Trading (2 cols) ── -->
+        <article class="card card-chips">
+          <p class="eyebrow eyebrow-gold">Institutional Trading · 三大法人買賣超</p>
+
+          <div class="chips-badge" :class="{
+            'chips-fresh-badge--ok':    institutionalStatus?.status === 'completed',
+            'chips-fresh-badge--stale': institutionalStatus?.status === 'running',
+            'chips-fresh-badge--fail':  institutionalStatus?.status === 'failed',
+          }">
+            <span class="pip pip-lg" :class="{
+              'pip-ok':   institutionalStatus?.status === 'completed',
+              'pip-busy': institutionalStatus?.status === 'running',
+              'pip-err':  institutionalStatus?.status === 'failed',
+              'pip-warn': !institutionalStatus || institutionalStatus?.status === 'never',
+            }" />
+            {{ institutionalBadgeText }}
+          </div>
+
+          <div class="chips-summary" :class="institutionalStatus?.status === 'completed' ? 'chips-summary--done' : institutionalStatus?.status === 'failed' ? 'chips-summary--fail' : ''">
+            <p class="cs-title">
+              <template v-if="institutionalStatus?.status === 'running'">正在爬取三大法人資料</template>
+              <template v-else-if="institutionalStatus?.status === 'completed'">上次三大法人爬取已完成</template>
+              <template v-else-if="institutionalStatus?.status === 'failed'">上次三大法人爬取失敗</template>
+              <template v-else>尚未執行三大法人爬取</template>
+            </p>
+            <p class="cs-text">{{ institutionalSummaryText }}</p>
+          </div>
+
+          <div class="chips-meta">
+            <template v-if="institutionalStatus && institutionalStatus.status !== 'never'">
+              <div class="meta-row">
+                <span class="mkey">成功 / 總計</span>
+                <span class="mval">{{ institutionalStatus.success ?? 0 }} / {{ institutionalStatus.total ?? 0 }}</span>
+              </div>
+            </template>
+            <div v-if="institutionalStatus && institutionalStatus.status !== 'running' && institutionalStatus.status !== 'never'" class="meta-row">
+              <span class="mkey">完成時間</span>
+              <span class="mval">{{ institutionalCompletedAt }}</span>
             </div>
           </div>
 
-          <p v-if="majorError" class="chips-err">{{ majorError }}</p>
+          <div v-if="institutionalStatus?.status === 'running'" class="chips-progress">
+            <div class="cp-track">
+              <div class="cp-fill" :style="{ width: `${institutionalProgressPct}%` }" />
+            </div>
+            <p class="cp-text">{{ institutionalStatus?.message || '爬取進行中…' }}</p>
+          </div>
+
+          <div class="card-footer">
+            <button
+              class="action-btn"
+              :class="{ busy: institutionalTriggering || institutionalStatus?.status === 'running' }"
+              :disabled="institutionalTriggering || institutionalStatus?.status === 'running'"
+              @click="triggerInstitutional"
+            >{{ institutionalTriggering || institutionalStatus?.status === 'running' ? '爬取中…' : '觸發今日爬取' }}</button>
+            <span v-if="institutionalStatus?.status === 'completed'" class="status-icon status-ok" title="上次執行成功">✓</span>
+            <span v-else-if="institutionalStatus?.status === 'failed'" class="status-icon status-fail" title="上次執行失敗">✕</span>
+            <span v-if="institutionalError" class="chips-err">{{ institutionalError }}</span>
+          </div>
         </article>
 
       </div>
@@ -2056,6 +2328,143 @@ const settingsOpen = ref(false)
 .slide-down-enter-from,
 .slide-down-leave-to { opacity: 0; transform: translateY(-6px); }
 
+/* ─ Market Banner ─ */
+.market-banner {
+  max-width: 1240px;
+  margin: 24px auto 0;
+  padding: 0 32px;
+}
+.mb-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.mb-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+.mb-date {
+  font-size: 13px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+  margin-left: auto;
+}
+.mb-date--none { color: var(--t3); font-family: var(--font); }
+.mb-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--line2);
+  border-radius: 7px;
+  color: var(--t2);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.mb-refresh:hover:not(:disabled) {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.mb-refresh:disabled { opacity: 0.4; cursor: default; }
+.mb-spin { animation: spin 1.2s linear infinite; }
+.mb-markets {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.mb-market {
+  background: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.mb-mkt-tag {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--blue);
+  background: color-mix(in oklch, var(--blue) 12%, var(--s2));
+  border: 1px solid color-mix(in oklch, var(--blue) 25%, var(--line));
+  border-radius: 6px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+  min-width: 36px;
+  text-align: center;
+}
+.mb-stats {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+.mb-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mb-stat--total {
+  border-left: 1px solid var(--line);
+  padding-left: 20px;
+  margin-left: 4px;
+}
+.mb-stat-label {
+  font-size: 10.5px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+.mb-stat-val {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.val-up { color: var(--up); }
+.val-dn { color: var(--dn); }
+.mb-empty {
+  grid-column: span 2;
+  text-align: center;
+  color: var(--t3);
+  font-size: 13px;
+  padding: 20px;
+}
+.mb-empty-hint {
+  font-size: 13px;
+  color: var(--t3);
+  padding: 16px 0;
+  border-top: 1px dashed var(--line);
+}
+
+/* ─ Card Footer (button + status icon) ─ */
+.card-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.status-icon {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.status-ok   { color: var(--dn); }
+.status-fail { color: var(--up); }
+
 /* ═══════════════════════════════════════
    Main / Bento Grid
 ═══════════════════════════════════════ */
@@ -2093,12 +2502,13 @@ const settingsOpen = ref(false)
 }
 
 /* Card column spans */
-.card-overview   { grid-column: span 2; min-height: 230px; }
+.card-overview   { grid-column: span 2; }
 .card-status     { grid-column: span 1; }
-.card-watchlist  { grid-column: span 1; min-height: 200px; }
+.card-watchlist  { grid-column: span 1; }
 .card-jump       { grid-column: span 1; position: relative; }
-.card-sync       { grid-column: span 1; min-height: 200px; }
+.card-sync       { grid-column: span 1; }
 .card-chips      { grid-column: span 2; }
+.card-technical  { grid-column: span 1; }
 
 .major-days-row {
   display: flex;
@@ -2172,6 +2582,7 @@ const settingsOpen = ref(false)
 }
 
 .eyebrow-blue { color: var(--blue); }
+.eyebrow-gold { color: var(--gold); }
 
 /* ─ Card Title / Desc ─ */
 .card-title {
@@ -2567,6 +2978,8 @@ const settingsOpen = ref(false)
   .sync-bar__inner,
   .main { padding-left: 20px; padding-right: 20px; }
 
+  .market-banner { padding-left: 20px; padding-right: 20px; }
+
   .header-date { display: none; }
 
   .bento { grid-template-columns: repeat(2, 1fr); }
@@ -2574,6 +2987,8 @@ const settingsOpen = ref(false)
   .card-chips    { grid-column: span 2; }
 
   .big-num { font-size: 52px; }
+
+  .mb-markets { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 600px) {
@@ -2582,6 +2997,7 @@ const settingsOpen = ref(false)
   .card-chips { grid-column: span 1; }
 
   .main { padding: 16px 16px 32px; }
+  .market-banner { padding: 0 16px; }
 
   .card { padding: 18px 18px; }
 
@@ -2589,6 +3005,9 @@ const settingsOpen = ref(false)
 
   .sync-bar__track,
   .sync-bar__url { display: none; }
+
+  .mb-stats { gap: 14px; }
+  .mb-stat--total { padding-left: 12px; margin-left: 0; }
 }
 
 /* ═══════════════════════════════════════

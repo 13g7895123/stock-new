@@ -126,6 +126,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 		institutional := api.Group("/institutional")
 		{
 			institutional.GET("/status", institutionalHandler.Status)
+			institutional.GET("/summary", institutionalHandler.MarketSummary)
 			institutional.POST("/trigger", institutionalHandler.Trigger)
 			institutional.GET("/:symbol", institutionalHandler.GetBySymbol)
 		}
