@@ -2477,6 +2477,7 @@ const settingsOpen = ref(false)
 .bento {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: minmax(280px, auto);
   gap: 14px;
 }
 
@@ -2501,13 +2502,13 @@ const settingsOpen = ref(false)
   box-shadow: 0 4px 24px color-mix(in oklch, var(--bg) 30%, transparent);
 }
 
-/* Card column spans */
-.card-overview   { grid-column: span 2; }
+/* Card column spans — 全部等寬 span 1 */
+.card-overview   { grid-column: span 1; }
 .card-status     { grid-column: span 1; }
 .card-watchlist  { grid-column: span 1; }
 .card-jump       { grid-column: span 1; position: relative; }
 .card-sync       { grid-column: span 1; }
-.card-chips      { grid-column: span 2; }
+.card-chips      { grid-column: span 1; }
 .card-technical  { grid-column: span 1; }
 
 .major-days-row {
@@ -2983,8 +2984,6 @@ const settingsOpen = ref(false)
   .header-date { display: none; }
 
   .bento { grid-template-columns: repeat(2, 1fr); }
-  .card-overview { grid-column: span 2; }
-  .card-chips    { grid-column: span 2; }
 
   .big-num { font-size: 52px; }
 
@@ -2993,8 +2992,6 @@ const settingsOpen = ref(false)
 
 @media (max-width: 600px) {
   .bento { grid-template-columns: 1fr; gap: 10px; }
-  .card-overview,
-  .card-chips { grid-column: span 1; }
 
   .main { padding: 16px 16px 32px; }
   .market-banner { padding: 0 16px; }
