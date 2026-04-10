@@ -1,172 +1,197 @@
 package handlers
 
 import (
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
+"encoding/json"
+"fmt"
+"io"
+"net/http"
+"time"
 
-	"stock-backend/internal/models"
+"stock-backend/internal/models"
 
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
+"github.com/gin-gonic/gin"
+"gorm.io/gorm"
 )
 
 type RealtimeHandler struct {
-	db     *gorm.DB
-	client *http.Client
+db     *gorm.DB
+client *http.Client
 }
 
 func NewRealtimeHandler(db *gorm.DB) *RealtimeHandler {
-	return &RealtimeHandler{
-		db: db,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
-	}
+return &RealtimeHandler{
+db: db,
+client: &http.Client{
+Timeout: 8 * time.Second,
+},
+}
 }
 
 // RealtimeQuote 即時報價
 type RealtimeQuote struct {
-	Symbol      string  `json:"symbol"`
-	Name        string  `json:"name"`
-	Price       float64 `json:"price"`        // 成交價
-	Open        float64 `json:"open"`         // 開盤
-	High        float64 `json:"high"`         // 盤中最高
-	Low         float64 `json:"low"`          // 盤中最低
-	PrevClose   float64 `json:"prev_close"`   // 昨收
-	Change      float64 `json:"change"`       // 漲跌
-	ChangePct   float64 `json:"change_pct"`   // 漲跌幅 %
-	Volume      int64   `json:"volume"`       // 成交量（張）
-	TradeTime   string  `json:"trade_time"`   // 最後成交時間 HH:MM:SS
-	TradeDate   string  `json:"trade_date"`   // 日期 YYYYMMDD
-	IsTrading   bool    `json:"is_trading"`   // 是否有即時數值
+Symbol    string  `json:"symbol"`
+Name      string  `json:"name"`
+Price     float64 `json:"price"`      // 成交價
+Open      float64 `json:"open"`       // 開盤
+High      float64 `json:"high"`       // 盤中最高
+Low       float64 `json:"low"`        // 盤中最低
+PrevClose float64 `json:"prev_close"` // 昨收
+Change    float64 `json:"change"`     // 漲跌
+ChangePct float64 `json:"change_pct"` // 漲跌幅 %
+Volume    int64   `json:"volume"`     // 成交量（張）
+TradeTime string  `json:"trade_time"` // 最後成交時間 HH:MM:SS
+TradeDate string  `json:"trade_date"` // 日期 YYYYMMDD
+IsTrading bool    `json:"is_trading"` // 是否有即時數值
 }
 
-// twseMsgItem TWSE MIS API 回傳的原始欄位
-type twseMsgItem struct {
-	C string `json:"c"` // code
-	N string `json:"n"` // name
-	Z string `json:"z"` // latest price
-	O string `json:"o"` // open
-	H string `json:"h"` // high
-	L string `json:"l"` // low
-	Y string `json:"y"` // yesterday close
-	V string `json:"v"` // volume (張)
-	T string `json:"t"` // time HH:MM:SS
-	D string `json:"d"` // date YYYYMMDD
+// yahooChartMeta Yahoo Finance v8 chart API meta field
+type yahooChartMeta struct {
+ShortName            string  `json:"shortName"`
+LongName             string  `json:"longName"`
+RegularMarketPrice   float64 `json:"regularMarketPrice"`
+RegularMarketDayHigh float64 `json:"regularMarketDayHigh"`
+RegularMarketDayLow  float64 `json:"regularMarketDayLow"`
+RegularMarketVolume  int64   `json:"regularMarketVolume"`
+RegularMarketTime    int64   `json:"regularMarketTime"`
+ChartPreviousClose   float64 `json:"chartPreviousClose"`
+CurrentTradingPeriod struct {
+Regular struct {
+Start int64 `json:"start"`
+End   int64 `json:"end"`
+} `json:"regular"`
+} `json:"currentTradingPeriod"`
 }
 
-type twseResp struct {
-	MsgArray []twseMsgItem `json:"msgArray"`
+type yahooChartQuote struct {
+Open   []float64 `json:"open"`
+High   []float64 `json:"high"`
+Low    []float64 `json:"low"`
+Close  []float64 `json:"close"`
+Volume []int64   `json:"volume"`
 }
 
-func parseF(s string) float64 {
-	s = strings.TrimSpace(s)
-	if s == "-" || s == "" {
-		return 0
-	}
-	v, _ := strconv.ParseFloat(s, 64)
-	return v
+type yahooChartResult struct {
+Meta       yahooChartMeta `json:"meta"`
+Timestamps []int64        `json:"timestamp"`
+Indicators struct {
+Quote []yahooChartQuote `json:"quote"`
+} `json:"indicators"`
 }
 
-func parseI(s string) int64 {
-	s = strings.TrimSpace(s)
-	if s == "-" || s == "" {
-		return 0
-	}
-	// 去掉千分位逗號
-	s = strings.ReplaceAll(s, ",", "")
-	v, _ := strconv.ParseInt(s, 10, 64)
-	return v
+type yahooChartResp struct {
+Chart struct {
+Result []yahooChartResult `json:"result"`
+Error  interface{}        `json:"error"`
+} `json:"chart"`
 }
 
 // Quote  GET /api/realtime/:symbol
+// 使用 Yahoo Finance v8 chart API：無需認證，可從伺服器端呼叫
 func (h *RealtimeHandler) Quote(c *gin.Context) {
-	symbol := c.Param("symbol")
+symbol := c.Param("symbol")
 
-	// 查市場別
-	var stock models.Stock
-	if err := h.db.Select("symbol, name, market").
-		Where("symbol = ?", symbol).First(&stock).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "symbol not found"})
-		return
-	}
+// 查市場別
+var stock models.Stock
+if err := h.db.Select("symbol, name, market").
+Where("symbol = ?", symbol).First(&stock).Error; err != nil {
+c.JSON(http.StatusNotFound, gin.H{"error": "symbol not found"})
+return
+}
 
-	// 決定 exchange prefix
-	ex := "tse"
-	if stock.Market == "TPEX" {
-		ex = "otc"
-	}
+// Yahoo Finance 台股 suffix：上市 .TW，上櫃 .TWO
+suffix := ".TW"
+if stock.Market == "TPEX" {
+suffix = ".TWO"
+}
+yahooSym := symbol + suffix
 
-	url := fmt.Sprintf(
-		"https://mis.twse.com.tw/stock/api/getStockInfo.asp?ex_ch=%s_%s.tw&json=1&delay=0",
-		ex, symbol,
-	)
+url := fmt.Sprintf(
+"https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1d&interval=1d",
+yahooSym,
+)
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "request build failed"})
-		return
-	}
-	req.Header.Set("Referer", "https://mis.twse.com.tw/")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; stock-monitor/1.0)")
+req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
+if err != nil {
+c.JSON(http.StatusInternalServerError, gin.H{"error": "request build failed"})
+return
+}
+req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+req.Header.Set("Accept", "application/json")
 
-	resp, err := h.client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed"})
-		return
-	}
-	defer resp.Body.Close()
+resp, err := h.client.Do(req)
+if err != nil {
+c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed: " + err.Error()})
+return
+}
+defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "read upstream body failed"})
-		return
-	}
+body, err := io.ReadAll(resp.Body)
+if err != nil {
+c.JSON(http.StatusBadGateway, gin.H{"error": "read upstream body failed"})
+return
+}
 
-	var raw twseResp
-	if err := json.Unmarshal(body, &raw); err != nil || len(raw.MsgArray) == 0 {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "invalid upstream response"})
-		return
-	}
+var raw yahooChartResp
+if err := json.Unmarshal(body, &raw); err != nil {
+c.JSON(http.StatusBadGateway, gin.H{"error": "invalid upstream response"})
+return
+}
+if len(raw.Chart.Result) == 0 {
+c.JSON(http.StatusBadGateway, gin.H{"error": "no data for symbol"})
+return
+}
 
-	item := raw.MsgArray[0]
-	price := parseF(item.Z)
-	prevClose := parseF(item.Y)
-	open := parseF(item.O)
-	high := parseF(item.H)
-	low := parseF(item.L)
+meta := raw.Chart.Result[0].Meta
+quotes := raw.Chart.Result[0].Indicators.Quote
 
-	isTrading := price > 0
+// 取今日開盤價
+openPrice := 0.0
+if len(quotes) > 0 && len(quotes[0].Open) > 0 {
+openPrice = quotes[0].Open[0]
+}
 
-	change := 0.0
-	changePct := 0.0
-	if isTrading && prevClose > 0 {
-		change = price - prevClose
-		changePct = change / prevClose * 100
-	}
+// 判斷是否盤中：現在時間介於交易時段 start ~ end
+now := time.Now().Unix()
+regStart := meta.CurrentTradingPeriod.Regular.Start
+regEnd := meta.CurrentTradingPeriod.Regular.End
+isTrading := now >= regStart && now <= regEnd && meta.RegularMarketPrice > 0
 
-	quote := RealtimeQuote{
-		Symbol:    symbol,
-		Name:      stock.Name,
-		Price:     price,
-		Open:      open,
-		High:      high,
-		Low:       low,
-		PrevClose: prevClose,
-		Change:    change,
-		ChangePct: changePct,
-		Volume:    parseI(item.V),
-		TradeTime: item.T,
-		TradeDate: item.D,
-		IsTrading: isTrading,
-	}
+tradeTime := ""
+tradeDate := ""
+if meta.RegularMarketTime > 0 {
+t := time.Unix(meta.RegularMarketTime, 0).In(time.FixedZone("CST", 8*3600))
+tradeTime = t.Format("15:04:05")
+tradeDate = t.Format("2006-01-02")
+}
 
-	// Cache-Control: 避免瀏覽器快取即時報價
-	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusOK, quote)
+prevClose := meta.ChartPreviousClose
+price := meta.RegularMarketPrice
+change := 0.0
+changePct := 0.0
+if prevClose > 0 {
+change = price - prevClose
+changePct = change / prevClose * 100
+}
+
+// Yahoo volume 單位是「股」，台股 1 張 = 1000 股
+volumeLot := meta.RegularMarketVolume / 1000
+
+quote := RealtimeQuote{
+Symbol:    symbol,
+Name:      stock.Name,
+Price:     price,
+Open:      openPrice,
+High:      meta.RegularMarketDayHigh,
+Low:       meta.RegularMarketDayLow,
+PrevClose: prevClose,
+Change:    change,
+ChangePct: changePct,
+Volume:    volumeLot,
+TradeTime: tradeTime,
+TradeDate: tradeDate,
+IsTrading: isTrading,
+}
+
+c.Header("Cache-Control", "no-store")
+c.JSON(http.StatusOK, quote)
 }
