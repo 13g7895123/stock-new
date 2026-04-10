@@ -40,6 +40,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 	majorHandler := handlers.NewMajorHandler(db)
 	groupHandler := handlers.NewGroupHandler(db)
 	winrateHandler := handlers.NewWinrateHandler(db)
+	technicalHandler := handlers.NewTechnicalHandler(db)
 
 	api := r.Group("/api")
 	{
@@ -125,6 +126,11 @@ func Setup(db *gorm.DB) *gin.Engine {
 		{
 			debugGroup.GET("/raw-month", debugHandler.RawMonth)
 			debugGroup.GET("/broker-fetch", debugHandler.BrokerFetch)
+		}
+
+		technicalGroup := api.Group("/technical")
+		{
+			technicalGroup.GET("/screener", technicalHandler.Screener)
 		}
 
 		dbViewerHandler := handlers.NewDBViewerHandler(db)

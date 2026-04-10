@@ -1220,6 +1220,16 @@ const settingsOpen = ref(false)
           <p v-if="priceSyncError" class="chips-err">⚠ {{ priceSyncError }}</p>
         </article>
 
+        <!-- Card 9: Technical Screener (1 col) -->
+        <article class="card card--action">
+          <p class="card-eyebrow">Technical Analysis</p>
+          <h2 class="card-title">技術分析篩選</h2>
+          <p class="card-desc">依技術條件篩選股票，包含突破上周／上月高點及即將突破等訊號。</p>
+          <NuxtLink to="/technical" class="ghost-btn">
+            進入篩選器 <span class="ghost-btn__arr">→</span>
+          </NuxtLink>
+        </article>
+
         <!-- Card 8: Major Broker (2 cols) -->
         <article class="card card--chips">
           <p class="card-eyebrow">Major Brokers · 主力買賣超</p>
@@ -1595,6 +1605,19 @@ const settingsOpen = ref(false)
           </div>
 
           <p v-if="priceSyncError" class="chips-err">{{ priceSyncError }}</p>
+        </article>
+
+        <!-- ── Technical Screener (1 col) ── -->
+        <article class="card card-technical">
+          <p class="eyebrow eyebrow-blue">Technical Analysis</p>
+          <h2 class="card-title">技術分析篩選</h2>
+          <p class="card-desc">依技術條件篩選股票，包含突破上周／上月高點及即將突破等訊號。</p>
+          <NuxtLink to="/technical" class="link-btn">
+            進入篩選器
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M2 7h10M8.5 3.5l4 3.5-4 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </NuxtLink>
         </article>
 
         <!-- ── Major Broker (2 cols) ── -->
