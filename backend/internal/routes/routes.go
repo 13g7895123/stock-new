@@ -133,6 +133,9 @@ func Setup(db *gorm.DB) *gin.Engine {
 			technicalGroup.GET("/screener", technicalHandler.Screener)
 		}
 
+		realtimeHandler := handlers.NewRealtimeHandler(db)
+		api.GET("/realtime/:symbol", realtimeHandler.Quote)
+
 		dbViewerHandler := handlers.NewDBViewerHandler(db)
 		adminGroup := api.Group("/admin/db")
 		{

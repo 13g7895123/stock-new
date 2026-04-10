@@ -461,6 +461,7 @@ watch(isDark, () => drawChart())
 onBeforeUnmount(() => {
   roChart?.disconnect()
   if (chipsStatusPoll) clearInterval(chipsStatusPoll)
+  if (rtTimer) clearInterval(rtTimer)
 })
 
 // ── 日期範圍快捷 ──────────────────────────
@@ -482,6 +483,55 @@ function setRange(r: typeof ranges[0]) {
   activeRange.value = r.key
   refreshPrices()
 }
+
+// ── 即時報價 ────────────────────────────────
+interface RealtimeQuote {
+  symbol: string
+  name: string
+  price: number
+  open: number
+  high: number
+  low: number
+  prev_close: number
+  change: number
+  change_pct: number
+  volume: number
+  trade_time: string
+  trade_date: string
+  is_trading: boolean
+}
+
+const realtime  = ref<RealtimeQuote | null>(null)
+const rtLoading = ref(false)
+const rtError   = ref(false)
+let   rtTimer: ReturnType<typeof setInterval> | null = null
+
+function isTradingHours(): boolean {
+  const now = new Date()
+  const day = now.getDay()                     // 0=日, 6=六
+  if (day === 0 || day === 6) return false
+  const hhmm = now.getHours() * 100 + now.getMinutes()
+  return hhmm >= 900 && hhmm <= 1330
+}
+
+async function fetchRealtime() {
+  rtLoading.value = true
+  try {
+    const data = await $fetch<RealtimeQuote>(`/api/realtime/${symbol}`)
+    realtime.value = data
+    rtError.value  = false
+  } catch {
+    rtError.value = true
+  } finally {
+    rtLoading.value = false
+  }
+}
+
+// 一載入就抓一次，盤中每 10 秒輪詢
+fetchRealtime()
+rtTimer = setInterval(() => {
+  if (isTradingHours()) fetchRealtime()
+}, 10_000)
 
 // ── 統計 ──────────────────────────────────
 const latest = computed(() => prices.value?.[prices.value.length - 1] ?? null)
@@ -868,6 +918,37 @@ function startRefresh() {
           {{ refreshMsg }}
         </span>
         <span v-else>{{ refreshMsg }}</span>
+      </div>
+
+      <!-- ══ Realtime Quote Bar ══ -->
+      <div class="rt-bar" :class="{ 'rt-bar--active': realtime?.is_trading, 'rt-bar--error': rtError }">
+        <div class="rt-badge" :class="realtime?.is_trading ? 'rt-badge--live' : 'rt-badge--off'">
+          <span v-if="realtime?.is_trading" class="rt-dot" />
+          {{ realtime?.is_trading ? '盤中即時' : '非交易時段' }}
+        </div>
+        <template v-if="realtime && !rtError">
+          <div class="rt-price" :class="(realtime.change ?? 0) >= 0 ? 'col-up' : 'col-dn'">
+            {{ realtime.is_trading ? realtime.price.toFixed(2) : '—' }}
+          </div>
+          <div v-if="realtime.is_trading" class="rt-delta" :class="realtime.change >= 0 ? 'col-up' : 'col-dn'">
+            {{ realtime.change >= 0 ? '+' : '' }}{{ realtime.change.toFixed(2) }}
+            （{{ realtime.change >= 0 ? '+' : '' }}{{ realtime.change_pct.toFixed(2) }}%）
+          </div>
+          <div class="rt-divider" />
+          <div class="rt-item"><span class="rt-key">開盤</span><span class="rt-val">{{ realtime.open > 0 ? realtime.open.toFixed(2) : '—' }}</span></div>
+          <div class="rt-item"><span class="rt-key">最高</span><span class="rt-val col-up">{{ realtime.high > 0 ? realtime.high.toFixed(2) : '—' }}</span></div>
+          <div class="rt-item"><span class="rt-key">最低</span><span class="rt-val col-dn">{{ realtime.low > 0 ? realtime.low.toFixed(2) : '—' }}</span></div>
+          <div class="rt-item"><span class="rt-key">成交量</span><span class="rt-val">{{ realtime.volume > 0 ? realtime.volume.toLocaleString() + ' 張' : '—' }}</span></div>
+          <div v-if="realtime.trade_time" class="rt-time">{{ realtime.trade_time }}</div>
+        </template>
+        <span v-else-if="rtLoading" class="rt-loading">載入中…</span>
+        <span v-else-if="rtError" class="rt-err">無法取得即時資料</span>
+        <button class="rt-refresh" :disabled="rtLoading" @click="fetchRealtime" title="手動刷新">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :class="{ spinning: rtLoading }">
+            <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+            <path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+          </svg>
+        </button>
       </div>
 
       <!-- ══ Stat Bar ══ -->
@@ -2177,4 +2258,72 @@ function startRefresh() {
 .badge-win  { background: oklch(37% 0.14 150 / 0.25); color: oklch(62% 0.16 150); }
 .badge-loss { background: oklch(37% 0.14 25  / 0.25); color: oklch(62% 0.16 25);  }
 .badge-open { background: oklch(37% 0.08 240 / 0.25); color: oklch(62% 0.10 240); }
+
+/* ── Realtime Bar ─────────────────────────── */
+.rt-bar {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  margin-bottom: 0.75rem;
+  font-size: 0.82rem;
+  transition: border-color 0.2s;
+}
+.rt-bar--active { border-color: oklch(from var(--green) l c h / 0.45); }
+.rt-badge {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em;
+  padding: 2px 8px; border-radius: 99px;
+  background: var(--border); color: var(--muted);
+  white-space: nowrap;
+}
+.rt-badge--live {
+  background: oklch(from var(--green) l c h / 0.15);
+  color: var(--green);
+}
+.rt-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--green);
+  animation: rt-pulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes rt-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.85); }
+}
+.rt-price {
+  font-size: 1.1rem; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rt-delta {
+  font-size: 0.82rem; font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.rt-divider {
+  width: 1px; height: 18px;
+  background: var(--border); flex-shrink: 0;
+}
+.rt-item {
+  display: flex; align-items: center; gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.rt-key { color: var(--muted); font-size: 0.75rem; }
+.rt-val { font-weight: 500; }
+.rt-time {
+  margin-left: auto; color: var(--muted); font-size: 0.72rem;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.rt-loading, .rt-err { color: var(--muted); font-size: 0.78rem; }
+.rt-refresh {
+  background: none; border: none; cursor: pointer;
+  color: var(--muted); padding: 4px;
+  border-radius: 5px; display: flex; align-items: center;
+  transition: color 0.15s, background 0.15s;
+  margin-left: auto;
+}
+.rt-refresh:hover { color: var(--text); background: var(--border); }
+.rt-refresh:disabled { opacity: 0.4; cursor: default; }
+.spinning { animation: spin 0.8s linear infinite; display: inline-block; }
 </style>
