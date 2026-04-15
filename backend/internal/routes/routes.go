@@ -42,6 +42,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 	groupHandler := handlers.NewGroupHandler(db)
 	winrateHandler := handlers.NewWinrateHandler(db)
 	technicalHandler := handlers.NewTechnicalHandler(db)
+	chipScoreHandler := handlers.NewChipScoreHandler(db)
 
 	api := r.Group("/api")
 	{
@@ -55,6 +56,11 @@ func Setup(db *gorm.DB) *gin.Engine {
 			// 日K 價量
 			stocks.GET("/:symbol/prices", priceHandler.List)
 			stocks.GET("/:symbol/prices/latest", priceHandler.Latest)
+			// 週K / 月K 聚合
+			stocks.GET("/:symbol/prices/aggregated", priceHandler.Aggregated)
+			// 籌碼評分
+			stocks.GET("/:symbol/chip-score", chipScoreHandler.GetBySymbol)
+			stocks.POST("/:symbol/chip-score/calc", chipScoreHandler.TriggerSingle)
 			// Tags 指派
 			stocks.PUT("/:symbol/tags", tagHandler.SetStockTags)
 			// Groups 指派
@@ -140,6 +146,46 @@ func Setup(db *gorm.DB) *gin.Engine {
 		technicalGroup := api.Group("/technical")
 		{
 			technicalGroup.GET("/screener", technicalHandler.Screener)
+		}
+
+		// 籌碼評分
+		chipScoreGroup := api.Group("/chip-scores")
+		{
+			chipScoreGroup.GET("", chipScoreHandler.List)
+			chipScoreGroup.GET("/status", chipScoreHandler.Status)
+			chipScoreGroup.POST("/calc", chipScoreHandler.Trigger)
+			chipScoreGroup.POST("/calc/:symbol", chipScoreHandler.TriggerSingle)
+		}
+
+		// 除權息
+		dividendHandler := handlers.NewDividendHandler(db)
+		stocks.GET("/:symbol/dividends", dividendHandler.GetBySymbol)
+		stocks.GET("/:symbol/prices/adjusted", dividendHandler.AdjustedPrices)
+		dividendGroup := api.Group("/dividends")
+		{
+			dividendGroup.GET("/upcoming", dividendHandler.Upcoming)
+			dividendGroup.GET("/status", dividendHandler.Status)
+			dividendGroup.POST("/sync", dividendHandler.Sync)
+		}
+
+		// 產業資金流向
+		industryHandler := handlers.NewIndustryHandler(db)
+		industryGroup := api.Group("/industry")
+		{
+			industryGroup.GET("/flow", industryHandler.Flow)
+			industryGroup.GET("/flow/:industry", industryHandler.FlowByIndustry)
+			industryGroup.GET("/list", industryHandler.List)
+		}
+
+		// 歷史回測
+		backtestHandler := handlers.NewBacktestHandler(db)
+		backtestGroup := api.Group("/backtest")
+		{
+			backtestGroup.GET("/jobs", backtestHandler.ListJobs)
+			backtestGroup.POST("/run", backtestHandler.Run)
+			backtestGroup.GET("/jobs/:id", backtestHandler.GetJob)
+			backtestGroup.DELETE("/jobs/:id", backtestHandler.DeleteJob)
+			backtestGroup.GET("/defaults", backtestHandler.Defaults)
 		}
 
 		realtimeHandler := handlers.NewRealtimeHandler(db)

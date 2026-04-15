@@ -40,6 +40,14 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 		&models.TaskSchedule{},
 		&models.InstitutionalSyncJob{},
 		&models.InstitutionalTrading{},
+		&models.StockChipScore{},
+		&models.ChipScoreJob{},
+		&models.Dividend{},
+		&models.DividendSyncJob{},
+		&models.BacktestStrategy{},
+		&models.BacktestJob{},
+		&models.BacktestTrade{},
+		&models.BacktestEquityPoint{},
 	); err != nil {
 		return nil, err
 	}

@@ -122,6 +122,96 @@ const canvasWrap = ref<HTMLElement | null>(null)
 const hoveredIdx = ref<number | null>(null)
 let roChart: ResizeObserver | null = null
 
+// ── K 線週期 ───────────────────────────────────────────────
+type ChartPeriod = 'daily' | 'weekly' | 'monthly'
+const chartPeriod = ref<ChartPeriod>('daily')
+
+interface AggregatedBar {
+  period_start: string
+  open: number; high: number; low: number; close: number
+  volume: number; tx_value: number
+}
+const aggData = ref<AggregatedBar[]>([])
+const aggLoading = ref(false)
+
+// 正規化聚合資料為 DailyPrice 相容格式
+const chartData = computed<DailyPrice[]>(() => {
+  if (adjustedMode.value) {
+    return adjustedData.value.map(b => ({
+      id: 0,
+      symbol,
+      date: b.Date ?? b.date ?? '',
+      open: b.Open ?? b.open ?? 0,
+      high: b.High ?? b.high ?? 0,
+      low: b.Low ?? b.low ?? 0,
+      close: b.Close ?? b.close ?? 0,
+      volume: b.Volume ?? b.volume ?? 0,
+      tx_value: b.TxValue ?? b.tx_value ?? 0,
+      tx_count: b.TxCount ?? b.tx_count ?? 0,
+    }))
+  }
+  if (chartPeriod.value !== 'daily') {
+    return aggData.value.map((b, i) => ({
+      id: -(i + 1),
+      symbol,
+      date: b.period_start + 'T00:00:00Z',
+      open: b.open, high: b.high, low: b.low, close: b.close,
+      volume: b.volume, tx_value: b.tx_value, tx_count: 0,
+    }))
+  }
+  return prices.value ?? []
+})
+
+// ── 還原除權息 ────────────────────────────────────────────
+const adjustedMode = ref(false)
+const adjustedData = ref<any[]>([])
+const adjLoading = ref(false)
+
+async function fetchAdjusted() {
+  adjLoading.value = true
+  try {
+    adjustedData.value = await $fetch<any[]>(
+      `/api/stocks/${symbol}/prices/adjusted?from=${from.value}&to=${to.value}`
+    )
+  } catch { adjustedData.value = [] }
+  finally { adjLoading.value = false }
+}
+
+async function toggleAdjusted() {
+  adjustedMode.value = !adjustedMode.value
+  if (adjustedMode.value && adjustedData.value.length === 0) {
+    await fetchAdjusted()
+  }
+  await nextTick()
+  initView()
+  drawChart()
+}
+
+async function fetchAggregated() {
+  aggLoading.value = true
+  try {
+    const p = chartPeriod.value === 'weekly' ? 'weekly' : 'monthly'
+    // 月K 預設多拉 5 年資料
+    const aggFrom = chartPeriod.value === 'monthly'
+      ? new Date(new Date().getFullYear() - 5, 0, 1).toISOString().split('T')[0]
+      : from.value
+    aggData.value = await $fetch<AggregatedBar[]>(
+      `/api/stocks/${symbol}/prices/aggregated?period=${p}&from=${aggFrom}&to=${to.value}`
+    )
+  } catch { aggData.value = [] }
+  finally { aggLoading.value = false }
+}
+
+async function setChartPeriod(p: ChartPeriod) {
+  chartPeriod.value = p
+  if (p !== 'daily') {
+    await fetchAggregated()
+  }
+  await nextTick()
+  initView()
+  drawChart()
+}
+
 // ── MA Lines ───────────────────────────────────────────────
 interface MALine { period: number; color: string; enabled: boolean }
 const maLines = ref<MALine[]>([
@@ -145,8 +235,9 @@ function calcMA(data: DailyPrice[], period: number): (number | null)[] {
 
 // ── 計算包含即時資料的擴展資料陣列（用於均線計算）──────────────────
 function getExtendedData(): DailyPrice[] {
-  const data = prices.value ?? []
-  if (!realtime.value?.is_trading || realtime.value.price <= 0 || realtime.value.open <= 0) {
+  const data = chartData.value
+  // 週K/月K 不加入即時資料
+  if (chartPeriod.value !== 'daily' || !realtime.value?.is_trading || realtime.value.price <= 0 || realtime.value.open <= 0) {
     return data
   }
   
@@ -172,7 +263,7 @@ function getExtendedData(): DailyPrice[] {
 const hoveredMaValues = computed<Record<number, number | null>>(() => {
   if (hoveredIdx.value === null) return {}
   
-  const data = prices.value ?? []
+  const data = chartData.value
   if (hoveredIdx.value >= data.length) return {}
   
   const result: Record<number, number | null> = {}
@@ -195,7 +286,7 @@ let dragStartVS = 0
 let dragSpan    = 0
 
 function initView() {
-  const n = prices.value?.length ?? 0
+  const n = chartData.value.length
   viewStart.value = 0
   viewEnd.value   = n
 }
@@ -216,8 +307,8 @@ const hLines = ref<number[]>([])
 const isDrawMode = ref(false)
 
 function priceAtY(clientY: number): number | null {
-  const data = prices.value
-  if (!data?.length || !canvasWrap.value) return null
+  const data = chartData.value
+  if (!data.length || !canvasWrap.value) return null
   const wrap = canvasWrap.value
   const rect = wrap.getBoundingClientRect()
   const y = clientY - rect.top
@@ -278,7 +369,7 @@ function drawChart() {
   ctx.fillStyle = c.bg
   ctx.fillRect(0, 0, W, H)
 
-  const data = prices.value
+  const data = chartData.value
   if (!data || data.length === 0) {
     ctx.fillStyle = c.label
     ctx.font = '13px "DM Sans", system-ui, sans-serif'
@@ -540,7 +631,7 @@ function drawChart() {
 
 function onMouseMove(e: MouseEvent) {
   const wrap = canvasWrap.value
-  if (!wrap || !prices.value?.length) return
+  if (!wrap || !chartData.value.length) return
   const rect  = wrap.getBoundingClientRect()
   const x     = e.clientX - rect.left
   const vs    = viewStart.value
@@ -557,7 +648,7 @@ function onMouseMove(e: MouseEvent) {
     const dx   = e.clientX - dragStartX
     const barsPerPx = dragSpan / drawW
     const shift = Math.round(-dx * barsPerPx)
-    const cv = clampView(dragStartVS + shift, dragStartVS + shift + dragSpan, prices.value.length)
+    const cv = clampView(dragStartVS + shift, dragStartVS + shift + dragSpan, chartData.value.length)
     viewStart.value = cv.s
     viewEnd.value   = cv.e
   }
@@ -610,8 +701,8 @@ function onContextMenu(e: MouseEvent) {
 
 function onWheel(ev: WheelEvent) {
   ev.preventDefault()
-  const data = prices.value
-  if (!data?.length || !canvasWrap.value) return
+  const data = chartData.value
+  if (!data.length || !canvasWrap.value) return
   const n    = data.length
   const wrap = canvasWrap.value
   const drawW  = wrap.clientWidth - PAD_R
@@ -639,6 +730,7 @@ function initChart() {
 
 onMounted(async () => { await nextTick(); initChart() })
 watch(prices, async () => { await nextTick(); initView(); drawChart() })
+watch(aggData, async () => { await nextTick(); initView(); drawChart() })
 watch(isDark, () => drawChart())
 watch(realtime, () => drawChart(), { deep: true })
 onBeforeUnmount(() => {
@@ -694,6 +786,78 @@ fetchRealtime()
 rtTimer = setInterval(() => {
   if (isTradingHours()) fetchRealtime()
 }, 10_000)
+
+// ── 籌碼評分 ──────────────────────────────────────────────────────────────
+interface ChipScore {
+  total_score: number
+  institutional_score: number
+  major_score: number
+  chips_pyramid_score: number
+  winrate_score: number
+  calc_date: string
+  breakdown: string
+}
+const { data: chipScore, refresh: refreshChipScore } = useFetch<ChipScore>(
+  `/api/stocks/${symbol}/chip-score`,
+  { default: () => null }
+)
+function chipScoreColor(score: number): string {
+  if (score >= 75) return '#22c55e'
+  if (score >= 55) return '#f0a842'
+  if (score >= 35) return '#fb923c'
+  return '#ef4444'
+}
+function chipScoreLevel(score: number): string {
+  if (score >= 75) return '強勢'
+  if (score >= 55) return '中上'
+  if (score >= 35) return '中下'
+  return '弱勢'
+}
+const chipScoreCalcState = ref<'idle' | 'running' | 'done' | 'error'>('idle')
+async function calcChipScore() {
+  if (chipScoreCalcState.value === 'running') return
+  chipScoreCalcState.value = 'running'
+  try {
+    await $fetch(`/api/stocks/${symbol}/chip-score/calc`, { method: 'POST' })
+    await refreshChipScore()
+    chipScoreCalcState.value = 'done'
+    setTimeout(() => { chipScoreCalcState.value = 'idle' }, 3000)
+  } catch {
+    chipScoreCalcState.value = 'error'
+    setTimeout(() => { chipScoreCalcState.value = 'idle' }, 3000)
+  }
+}
+
+// ── 統計 ──────────────────────────────────
+// ── 除息記錄 ──────────────────────────────────────────────────────────────
+interface Dividend {
+  id: number
+  symbol: string
+  ex_date: string
+  cash_dividend: number
+  stock_dividend: number
+  ref_price: number
+  market: string
+}
+const { data: dividendData, refresh: refreshDividends } = useFetch<Dividend[]>(
+  `/api/stocks/${symbol}/dividends`,
+  { default: () => [] }
+)
+const dividends = computed(() => dividendData.value ?? [])
+const divSyncing = ref(false)
+async function syncDividends() {
+  divSyncing.value = true
+  try {
+    await $fetch('/api/dividends/sync', { method: 'POST' })
+    // 等 2s 讓後台爬取，再重整
+    setTimeout(async () => {
+      await refreshDividends()
+      divSyncing.value = false
+    }, 2000)
+  } catch {
+    divSyncing.value = false
+  }
+}
 
 // ── 統計 ──────────────────────────────────
 const latest = computed(() => prices.value?.[prices.value.length - 1] ?? null)
@@ -1192,13 +1356,44 @@ function startRefresh() {
           <span class="stat-key">均成交量（張）</span>
           <span class="stat-val">{{ avgVolume }}</span>
         </div>
+        <div class="stat-divider" />
+        <!-- 籌碼評分徽章 -->
+        <div class="stat-item chip-score-badge" v-if="chipScore">
+          <span class="stat-key">籌碼評分</span>
+          <span class="chip-score-num" :style="{ color: chipScoreColor(chipScore.total_score) }">
+            {{ chipScore.total_score.toFixed(0) }}
+            <span class="chip-score-lvl">{{ chipScoreLevel(chipScore.total_score) }}</span>
+          </span>
+        </div>
+        <div class="stat-item" v-else>
+          <span class="stat-key">籌碼評分</span>
+          <button class="btn-mini" :disabled="chipScoreCalcState === 'running'" @click="calcChipScore">
+            {{ chipScoreCalcState === 'running' ? '計算中…' : '點擊計算' }}
+          </button>
+        </div>
       </div>
 
       <!-- ══ Chart Panel ══ -->
       <div class="chart-panel">
         <div class="chart-toolbar">
           <div class="toolbar-left">
-            <span class="chart-label">日 K 線圖</span>
+            <div class="period-tabs">
+              <button class="period-tab" :class="{ 'period-tab--active': chartPeriod === 'daily' }" @click="setChartPeriod('daily')">日K</button>
+              <button class="period-tab" :class="{ 'period-tab--active': chartPeriod === 'weekly' }" @click="setChartPeriod('weekly')">週K</button>
+              <button class="period-tab" :class="{ 'period-tab--active': chartPeriod === 'monthly' }" @click="setChartPeriod('monthly')">月K</button>
+            </div>
+            <!-- 還原除權息切換 -->
+            <button
+              class="adj-btn"
+              :class="{ 'adj-btn--active': adjustedMode }"
+              :title="adjustedMode ? '關閉還原' : '前復權還原'"
+              @click="toggleAdjusted"
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                <path d="M2 8h12M8 2l6 6-6 6"/>
+              </svg>
+              {{ adjustedMode ? '還原中' : '還原除權息' }}
+            </button>
             <div class="ma-group">
               <button
                 v-for="ma in maLines"
@@ -1242,8 +1437,9 @@ function startRefresh() {
           </div>
         </div>
 
-        <div v-if="!prices || prices.length === 0" class="chart-empty">
-          此股票尚無日 K 資料，請先在首頁點擊「同步日 K 資料」。
+        <div v-if="aggLoading" class="chart-empty">載入中…</div>
+        <div v-else-if="chartData.length === 0" class="chart-empty">
+          此股票尚無{{ chartPeriod === 'daily' ? '日' : chartPeriod === 'weekly' ? '週' : '月' }} K 資料，請先在首頁點擊「同步日 K 資料」。
         </div>
         <div v-else ref="canvasWrap" class="chart-container"
           :class="{ 'chart-container--draw': isDrawMode }"
@@ -1256,19 +1452,19 @@ function startRefresh() {
           <canvas ref="canvasRef" />
           <!-- Crosshair tooltip -->
           <div
-            v-if="hoveredIdx !== null && prices?.[hoveredIdx]"
+            v-if="hoveredIdx !== null && chartData[hoveredIdx]"
             class="chart-tooltip"
           >
-            <span class="tt-date">{{ prices[hoveredIdx]!.date.split('T')[0] }}</span>
-            <span class="tt-row"><em>開</em>{{ prices[hoveredIdx]!.open.toFixed(2) }}</span>
-            <span class="tt-row"><em>高</em>{{ prices[hoveredIdx]!.high.toFixed(2) }}</span>
-            <span class="tt-row"><em>低</em>{{ prices[hoveredIdx]!.low.toFixed(2) }}</span>
+            <span class="tt-date">{{ chartData[hoveredIdx]!.date.split('T')[0] }}</span>
+            <span class="tt-row"><em>開</em>{{ chartData[hoveredIdx]!.open.toFixed(2) }}</span>
+            <span class="tt-row"><em>高</em>{{ chartData[hoveredIdx]!.high.toFixed(2) }}</span>
+            <span class="tt-row"><em>低</em>{{ chartData[hoveredIdx]!.low.toFixed(2) }}</span>
             <span class="tt-row"><em>收</em>
-              <b :class="prices[hoveredIdx]!.close >= prices[hoveredIdx]!.open ? 'col-up' : 'col-dn'">
-                {{ prices[hoveredIdx]!.close.toFixed(2) }}
+              <b :class="chartData[hoveredIdx]!.close >= chartData[hoveredIdx]!.open ? 'col-up' : 'col-dn'">
+                {{ chartData[hoveredIdx]!.close.toFixed(2) }}
               </b>
             </span>
-            <span class="tt-row"><em>量</em>{{ Math.round(prices[hoveredIdx]!.volume / 1000).toLocaleString() }}張</span>
+            <span class="tt-row"><em>量</em>{{ Math.round(chartData[hoveredIdx]!.volume / 1000).toLocaleString() }}張</span>
             
             <!-- 均線數值 -->
             <div v-if="Object.keys(hoveredMaValues).length > 0" class="tt-divider" />
@@ -1288,14 +1484,14 @@ function startRefresh() {
       <!-- ══ OHLCV Table ══ -->
       <div v-if="prices && prices.length > 0" class="table-panel">
         <div class="table-topbar">
-          <h2 class="table-heading">近期日K</h2>
+          <h2 class="table-heading">近期{{ chartPeriod === 'daily' ? '日' : chartPeriod === 'weekly' ? '週' : '月' }}K</h2>
           <span class="table-count">最近 30 筆</span>
         </div>
 
         <table class="ohlcv-table">
           <thead>
             <tr>
-              <th>日期</th>
+              <th>{{ chartPeriod === 'daily' ? '日期' : chartPeriod === 'weekly' ? '週起始' : '月份' }}</th>
               <th class="ra">開盤</th>
               <th class="ra">最高</th>
               <th class="ra">最低</th>
@@ -1306,7 +1502,7 @@ function startRefresh() {
           </thead>
           <tbody>
             <tr
-              v-for="p in [...(prices ?? [])].reverse().slice(0, 30)"
+              v-for="p in [...chartData].reverse().slice(0, 30)"
               :key="p.id"
             >
               <td class="td-date">{{ p.date.split('T')[0] }}</td>
@@ -1544,6 +1740,43 @@ function startRefresh() {
               </table>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- ══ 除息記錄 ══ -->
+      <div class="div-panel">
+        <div class="div-topbar">
+          <h2 class="table-heading">除息記錄</h2>
+          <button class="sync-btn-mini" @click="syncDividends" :disabled="divSyncing">
+            {{ divSyncing ? '同步中…' : '同步 TWSE' }}
+          </button>
+        </div>
+        <div v-if="dividends.length === 0" class="chart-empty">尚無除息記錄，可點擊「同步 TWSE」從交易所取得資料</div>
+        <div v-else class="div-table-wrap">
+          <table class="data-table ohlcv-table">
+            <thead>
+              <tr>
+                <th>除息日</th>
+                <th class="ra">現金股利（元）</th>
+                <th class="ra">股票股利（元）</th>
+                <th class="ra">除息參考價（元）</th>
+                <th class="ra">市場</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="d in dividends" :key="d.id">
+                <td class="td-date">{{ d.ex_date?.split?.('T')?.[0] ?? '—' }}</td>
+                <td class="ra" :class="d.cash_dividend > 0 ? 'col-up' : ''">
+                  {{ d.cash_dividend > 0 ? d.cash_dividend.toFixed(4) : '—' }}
+                </td>
+                <td class="ra" :class="d.stock_dividend > 0 ? 'col-up' : ''">
+                  {{ d.stock_dividend > 0 ? d.stock_dividend.toFixed(4) : '—' }}
+                </td>
+                <td class="ra">{{ d.ref_price > 0 ? d.ref_price.toFixed(2) : '—' }}</td>
+                <td class="ra"><span class="market-tag">{{ d.market }}</span></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -1949,6 +2182,31 @@ function startRefresh() {
   color: var(--t1);
 }
 
+.chip-score-num {
+  font-size: 17px;
+  font-weight: 700;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.chip-score-lvl {
+  font-size: 11px;
+  font-weight: 600;
+}
+.btn-mini {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--t3);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-mini:hover { border-color: var(--t2); color: var(--t1); }
+.btn-mini:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ── Chart Panel ───────────────────────── */
 .chart-panel {
   border: 1px solid var(--line);
@@ -2028,6 +2286,62 @@ function startRefresh() {
 }
 
 .chart-container--draw { cursor: cell; }
+
+.period-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--s3);
+  border-radius: 7px;
+  padding: 2px;
+}
+.period-tab {
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 12px;
+  background: transparent;
+  color: var(--t3);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.period-tab:hover { color: var(--t1); }
+.period-tab--active {
+  background: var(--s1);
+  color: var(--t1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+
+/* 還原除權息按鈕 */
+.adj-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--font); font-size: 11.5px; font-weight: 600;
+  padding: 4px 11px; border-radius: 6px;
+  background: transparent; border: 1px solid var(--line); color: var(--t3);
+  cursor: pointer; transition: all 0.15s;
+}
+.adj-btn:hover { border-color: var(--gold); color: var(--gold); }
+.adj-btn--active { background: var(--gold); border-color: var(--gold); color: #111; }
+
+/* 除息記錄 */
+.div-section { margin-top: 12px; }
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.sync-btn-mini {
+  font-size: 11.5px; font-weight: 600; padding: 4px 12px;
+  border-radius: 6px; background: transparent;
+  border: 1px solid var(--line); color: var(--t3); cursor: pointer;
+  transition: all 0.15s;
+}
+.sync-btn-mini:hover { border-color: var(--blue); color: var(--blue); }
+.sync-btn-mini:disabled { opacity: 0.5; cursor: not-allowed; }
+.div-table-wrap { overflow-x: auto; }
+.empty-hint { font-size: 13px; color: var(--t3); padding: 20px 0; text-align: center; }
+.market-tag {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+  padding: 1px 5px; border-radius: 3px;
+  background: var(--s3); color: var(--t2);
+}
 
 .chart-label {
   font-size: 11px;
@@ -2348,6 +2662,24 @@ function startRefresh() {
   transition: border-color 0.15s, color 0.15s;
 }
 .classic-toggle-btn:hover { border-color: var(--gold); color: var(--gold); }
+
+/* ── Dividend Panel ──────────────────────────── */
+.div-panel {
+  border: 1px solid var(--line);
+  background: var(--s2);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 20px;
+}
+.div-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 20px 13px;
+  border-bottom: 1px solid var(--line);
+}
+.div-table-wrap { overflow-x: auto; }
 
 /* ── Major Panel ──────────────────────────── */
 .major-panel {

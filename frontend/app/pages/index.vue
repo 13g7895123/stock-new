@@ -1009,6 +1009,34 @@ const settingsOpen = ref(false)
             股池
           </NuxtLink>
 
+          <!-- 籌碼評分 -->
+          <NuxtLink to="/chip-scores" class="btn-watchlist" aria-label="籌碼評分">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.6" fill="none"/>
+              <path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            評分
+          </NuxtLink>
+
+          <!-- 產業流向 -->
+          <NuxtLink to="/industry" class="btn-watchlist" aria-label="產業資金流向">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect x="1" y="9" width="3" height="6" fill="currentColor" opacity="0.6" rx="0.8"/>
+              <rect x="5.5" y="6" width="3" height="9" fill="currentColor" opacity="0.75" rx="0.8"/>
+              <rect x="10" y="3" width="3" height="12" fill="currentColor" rx="0.8"/>
+              <path d="M2.5 8L7 5l4.5-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.6"/>
+            </svg>
+            產業
+          </NuxtLink>
+
+          <!-- 回測 -->
+          <NuxtLink to="/backtest" class="btn-watchlist" aria-label="歷史回測">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M2 12l4-5 3 3 5-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </svg>
+            回測
+          </NuxtLink>
+
           <!-- Admin Panel -->
           <NuxtLink to="/admin" class="btn-admin" aria-label="後台管理">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -1064,6 +1092,9 @@ const settingsOpen = ref(false)
             <span v-if="isDark">☀</span><span v-else>☾</span>
           </button>
           <NuxtLink to="/watchlist" class="classic-admin-btn" aria-label="關注股池">股池</NuxtLink>
+          <NuxtLink to="/chip-scores" class="classic-admin-btn" aria-label="籌碼評分">評分</NuxtLink>
+          <NuxtLink to="/industry" class="classic-admin-btn" aria-label="產業資金流向">產業</NuxtLink>
+          <NuxtLink to="/backtest" class="classic-admin-btn" aria-label="歷史回測">回測</NuxtLink>
           <NuxtLink to="/admin" class="classic-admin-btn" aria-label="後台管理">後台</NuxtLink>
         </div>
       </div>
@@ -1609,6 +1640,45 @@ const settingsOpen = ref(false)
           <p class="card-desc">設定你關注的群組與標籤，快速查看各池子的持股概況與漲跌走勢。</p>
           <NuxtLink to="/watchlist" class="link-btn">
             前往股池
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M2 7h10M8.5 3.5l4 3.5-4 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </NuxtLink>
+        </article>
+
+        <!-- ── Chip Scores (1 col) ── -->
+        <article class="card card-watchlist">
+          <p class="eyebrow eyebrow-gold">Chip Score · 籌碼評分</p>
+          <h2 class="card-title">籌碼評分排行</h2>
+          <p class="card-desc">綜合法人、主力、大戶籌碼及歷史勝率，對全市場股票進行量化評分排列。</p>
+          <NuxtLink to="/chip-scores" class="link-btn">
+            前往評分
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M2 7h10M8.5 3.5l4 3.5-4 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </NuxtLink>
+        </article>
+
+        <!-- ── Industry Flow (1 col) ── -->
+        <article class="card card-watchlist">
+          <p class="eyebrow eyebrow-blue">Industry Flow · 產業資金</p>
+          <h2 class="card-title">產業資金流向</h2>
+          <p class="card-desc">以熱力圖呈現各產業的法人、投信、自營商資金流向，找出資金集中的強勢產業。</p>
+          <NuxtLink to="/industry" class="link-btn">
+            前往產業熱力圖
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M2 7h10M8.5 3.5l4 3.5-4 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </NuxtLink>
+        </article>
+
+        <!-- ── Backtest (1 col) ── -->
+        <article class="card card-watchlist">
+          <p class="eyebrow" style="color:#f0a842">Backtest · 歷史回測</p>
+          <h2 class="card-title">歷史回測引擎</h2>
+          <p class="card-desc">使用均線黃金/死叉策略對任一股票進行回測，查看報酬率、最大回撤與交易記錄。</p>
+          <NuxtLink to="/backtest" class="link-btn">
+            前往回測
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <path d="M2 7h10M8.5 3.5l4 3.5-4 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
