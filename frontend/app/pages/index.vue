@@ -998,6 +998,17 @@ const settingsOpen = ref(false)
             </svg>
           </button>
 
+          <!-- Watchlist -->
+          <NuxtLink to="/watchlist" class="btn-watchlist" aria-label="關注股池">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.9"/>
+              <rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.45"/>
+              <rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.45"/>
+              <rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.75"/>
+            </svg>
+            股池
+          </NuxtLink>
+
           <!-- Admin Panel -->
           <NuxtLink to="/admin" class="btn-admin" aria-label="後台管理">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -1052,6 +1063,7 @@ const settingsOpen = ref(false)
           <button class="classic-toggle-btn" :aria-label="isDark ? '切換亮色' : '切換暗色'" @click="toggleTheme">
             <span v-if="isDark">☀</span><span v-else>☾</span>
           </button>
+          <NuxtLink to="/watchlist" class="classic-admin-btn" aria-label="關注股池">股池</NuxtLink>
           <NuxtLink to="/admin" class="classic-admin-btn" aria-label="後台管理">後台</NuxtLink>
         </div>
       </div>
@@ -2240,6 +2252,28 @@ const settingsOpen = ref(false)
   flex-shrink: 0;
 }
 .btn-icon:hover { background: var(--s3); border-color: var(--line2); color: var(--t1); }
+
+.btn-watchlist {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--gold) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--gold) 35%, transparent);
+  color: var(--gold);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+.btn-watchlist:hover {
+  background: color-mix(in oklch, var(--gold) 22%, transparent);
+  border-color: var(--gold);
+  color: var(--gold);
+}
 
 .btn-admin {
   display: inline-flex;
