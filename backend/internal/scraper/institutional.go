@@ -45,10 +45,10 @@ type InstitutionalRecord struct {
 // ─── TWSE T86 ────────────────────────────────────────────────────────────────
 
 type twseT86Response struct {
-	Stat   string               `json:"stat"`
-	Date   string               `json:"date"`
-	Fields []string             `json:"fields"`
-	Data   [][]json.RawMessage  `json:"data"`
+	Stat   string              `json:"stat"`
+	Date   string              `json:"date"`
+	Fields []string            `json:"fields"`
+	Data   [][]json.RawMessage `json:"data"`
 }
 
 // rawStr 將 json.RawMessage 轉成字串，同時相容 JSON string（"18,907,101"）與 number（18907101）。

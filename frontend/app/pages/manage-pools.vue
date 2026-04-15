@@ -1204,9 +1204,13 @@ const today = new Date().toLocaleDateString('zh-TW', {
 .dialog-btn--cancel:hover { border-color: oklch(72% 0.015 240); }
 
 .dialog-btn--primary {
-  background: var(--blue);
-  border-color: var(--blue);
-  color: white;
+  background: oklch(47% 0.21 264);
+  border-color: oklch(47% 0.21 264);
+  color: #fff;
+}
+.dialog-btn--primary:hover:not(:disabled) {
+  background: oklch(53% 0.21 264);
+  border-color: oklch(53% 0.21 264);
 }
 .dialog-btn--primary:disabled {
   opacity: 0.5;
