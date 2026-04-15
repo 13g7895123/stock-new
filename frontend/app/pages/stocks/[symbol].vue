@@ -11,7 +11,27 @@ useHead({
 })
 
 const route = useRoute()
+const router = useRouter()
 const symbol = route.params.symbol as string
+
+// ── 搜尋股票 ──────────────────────────────
+const searchQuery = ref('')
+const searchFocused = ref(false)
+
+function handleSearch() {
+  const input = searchQuery.value.trim()
+  if (input) {
+    router.push(`/stocks/${input}`)
+    searchQuery.value = ''
+    searchFocused.value = false
+  }
+}
+
+function handleSearchKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    handleSearch()
+  }
+}
 
 // ── 型別 ──────────────────────────────────
 interface Stock {
@@ -330,6 +350,50 @@ function drawChart() {
   }
   ctx.setLineDash([])
 
+  // ── Realtime Price Line (盤中即時價格線)
+  if (realtime.value?.is_trading && realtime.value.price > 0) {
+    const rtPrice = realtime.value.price
+    const y = yPrice(rtPrice)
+    if (y >= PAD_T && y <= PAD_T + priceH) {
+      const isUp = realtime.value.change >= 0
+      const rtCol = isUp 
+        ? (isDark.value ? 'rgba(224,82,82,0.85)' : 'rgba(201,53,53,0.85)')
+        : (isDark.value ? 'rgba(61,170,107,0.85)' : 'rgba(31,138,80,0.85)')
+      
+      // 畫實線
+      ctx.strokeStyle = rtCol
+      ctx.lineWidth   = 2
+      ctx.setLineDash([])
+      ctx.beginPath()
+      ctx.moveTo(0, y)
+      ctx.lineTo(drawW, y)
+      ctx.stroke()
+      
+      // 價格標籤背景
+      const labelText = rtPrice.toFixed(2)
+      ctx.font = 'bold 11px "DM Sans", system-ui, sans-serif'
+      ctx.textAlign = 'right'
+      const textW = ctx.measureText(labelText).width
+      const labelPad = 6
+      const labelX = W - 4
+      const labelY = y - 3
+      
+      // 畫一個小的背景矩形
+      ctx.fillStyle = rtCol
+      ctx.fillRect(labelX - textW - labelPad, labelY - 11, textW + labelPad, 15)
+      
+      // 畫白色文字
+      ctx.fillStyle = isDark.value ? 'oklch(97% 0.01 220)' : 'oklch(100% 0 0)'
+      ctx.fillText(labelText, labelX - labelPad/2, labelY)
+      
+      // 在左側添加一個小標籤指示「即時」
+      ctx.textAlign = 'left'
+      ctx.font = 'bold 9px "DM Sans", system-ui, sans-serif'
+      ctx.fillStyle = rtCol
+      ctx.fillText('即時', 4, y - 3)
+    }
+  }
+
   // ── Crosshair
   const hi = hoveredIdx.value
   if (hi !== null && hi >= vs && hi < ve) {
@@ -458,6 +522,7 @@ function initChart() {
 onMounted(async () => { await nextTick(); initChart() })
 watch(prices, async () => { await nextTick(); initView(); drawChart() })
 watch(isDark, () => drawChart())
+watch(realtime, () => drawChart(), { deep: true })
 onBeforeUnmount(() => {
   roChart?.disconnect()
   if (chipsStatusPoll) clearInterval(chipsStatusPoll)
@@ -789,6 +854,32 @@ function startRefresh() {
           <span class="brand-cur">{{ symbol }}</span>
         </div>
         <div class="header-right">
+          <!-- 搜尋框 -->
+          <div class="search-box" :class="{ 'search-box--focused': searchFocused }">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="search-icon">
+              <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+              <path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <input
+              v-model="searchQuery"
+              type="text"
+              placeholder="搜尋股票代碼"
+              class="search-input"
+              @focus="searchFocused = true"
+              @blur="searchFocused = false"
+              @keydown="handleSearchKeydown"
+            />
+            <button
+              v-if="searchQuery"
+              class="search-clear"
+              @click="searchQuery = ''"
+              type="button"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                <path d="M12 4L4 12M4 4l8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
           <div class="settings-wrap">
             <button class="btn-icon" aria-label="外觀設定" @click="settingsOpen = !settingsOpen">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
@@ -845,6 +936,32 @@ function startRefresh() {
           <span class="classic-badge">{{ symbol }}</span>
         </div>
         <div class="classic-header-right">
+          <!-- 搜尋框 -->
+          <div class="search-box classic-search" :class="{ 'search-box--focused': searchFocused }">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" class="search-icon">
+              <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+              <path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <input
+              v-model="searchQuery"
+              type="text"
+              placeholder="搜尋股票代碼"
+              class="search-input"
+              @focus="searchFocused = true"
+              @blur="searchFocused = false"
+              @keydown="handleSearchKeydown"
+            />
+            <button
+              v-if="searchQuery"
+              class="search-clear"
+              @click="searchQuery = ''"
+              type="button"
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+                <path d="M12 4L4 12M4 4l8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
           <div class="settings-wrap">
             <button class="classic-settings-btn" aria-label="外觀設定" @click="settingsOpen = !settingsOpen">⚙</button>
             <div v-if="settingsOpen" class="settings-overlay" @click="settingsOpen = false" />
@@ -1467,6 +1584,77 @@ function startRefresh() {
   flex-shrink: 0;
 }
 .btn-icon:hover { background: var(--s3); border-color: var(--line2); color: var(--t1); }
+
+/* ── Search Box ────────────────────────── */
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  height: 34px;
+  background: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transition: all 0.2s;
+  min-width: 180px;
+}
+
+.search-box--focused {
+  border-color: var(--blue);
+  background: var(--s3);
+}
+
+.search-icon {
+  color: var(--t3);
+  flex-shrink: 0;
+}
+
+.search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--t1);
+  font-size: 13px;
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+.search-input::placeholder {
+  color: var(--t3);
+}
+
+.search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: none;
+  color: var(--t3);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.search-clear:hover {
+  color: var(--t1);
+  background: var(--s1);
+}
+
+.classic-search {
+  border-radius: 2px;
+  height: 28px;
+  min-width: 160px;
+  padding: 0 8px;
+}
+
+.classic-search .search-input {
+  font-size: 12px;
+}
 
 /* ── Content ───────────────────────────── */
 .content {
