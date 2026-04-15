@@ -17,8 +17,8 @@ import (
 )
 
 type ChipScoreHandler struct {
-	db  *gorm.DB
-	mu  sync.Mutex
+	db      *gorm.DB
+	mu      sync.Mutex
 	running bool
 }
 
@@ -184,9 +184,9 @@ type breakdownData struct {
 		NormScore float32 `json:"norm_score"`
 	} `json:"major"`
 	ChipsPyramid struct {
-		LargeHolderPct    float32 `json:"large_holder_pct"`     // 最新大戶持股%
-		LargeHolderTrend  float32 `json:"large_holder_trend"`   // 與上期差值（正=上升）
-		NormScore         float32 `json:"norm_score"`
+		LargeHolderPct   float32 `json:"large_holder_pct"`   // 最新大戶持股%
+		LargeHolderTrend float32 `json:"large_holder_trend"` // 與上期差值（正=上升）
+		NormScore        float32 `json:"norm_score"`
 	} `json:"chips_pyramid"`
 	Winrate struct {
 		AvgWinRatePct float32 `json:"avg_win_rate_pct"` // 近期買超券商平均勝率%
@@ -260,8 +260,8 @@ func (h *ChipScoreHandler) calcOne(symbol string) (*models.StockChipScore, error
 	// ── 3. 大戶持股面（15 分）────────────────────────────────────────────────
 	{
 		type pyramidRow struct {
-			SharePct     float32
-			DataDate     time.Time
+			SharePct float32
+			DataDate time.Time
 		}
 		// 取最近兩筆籌碼金字塔快照，計算大戶（前5層 = tier_rank > len-5）的股數佔比
 		var snapshots []uint
@@ -349,7 +349,7 @@ func (h *ChipScoreHandler) calcOne(symbol string) (*models.StockChipScore, error
 	}
 
 	if err := h.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "symbol"}},
+		Columns: []clause.Column{{Name: "symbol"}},
 		DoUpdates: clause.AssignmentColumns([]string{
 			"calc_date", "total_score", "institutional_score",
 			"major_score", "chips_pyramid_score", "winrate_score",

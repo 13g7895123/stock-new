@@ -68,17 +68,39 @@ func (h *BacktestHandler) Run(c *gin.Context) {
 
 	// 填補預設參數
 	def := backtest.DefaultParams()
-	if req.Params.EntryMAShort == 0 { req.Params.EntryMAShort = def.EntryMAShort }
-	if req.Params.EntryMALong  == 0 { req.Params.EntryMALong  = def.EntryMALong }
-	if req.Params.ExitMAShort  == 0 { req.Params.ExitMAShort  = def.ExitMAShort }
-	if req.Params.ExitMALong   == 0 { req.Params.ExitMALong   = def.ExitMALong }
-	if req.Params.CapitalPerTrade == 0 { req.Params.CapitalPerTrade = def.CapitalPerTrade }
-	if req.Params.MaxPositions == 0 { req.Params.MaxPositions = def.MaxPositions }
-	if req.Params.StopLossPct  == 0 { req.Params.StopLossPct  = def.StopLossPct }
-	if req.Params.TakeProfitPct == 0 { req.Params.TakeProfitPct = def.TakeProfitPct }
-	if req.Params.MaxHoldDays  == 0 { req.Params.MaxHoldDays  = def.MaxHoldDays }
-	if req.Params.FeeRate  == 0 { req.Params.FeeRate  = def.FeeRate }
-	if req.Params.TaxRate   == 0 { req.Params.TaxRate   = def.TaxRate }
+	if req.Params.EntryMAShort == 0 {
+		req.Params.EntryMAShort = def.EntryMAShort
+	}
+	if req.Params.EntryMALong == 0 {
+		req.Params.EntryMALong = def.EntryMALong
+	}
+	if req.Params.ExitMAShort == 0 {
+		req.Params.ExitMAShort = def.ExitMAShort
+	}
+	if req.Params.ExitMALong == 0 {
+		req.Params.ExitMALong = def.ExitMALong
+	}
+	if req.Params.CapitalPerTrade == 0 {
+		req.Params.CapitalPerTrade = def.CapitalPerTrade
+	}
+	if req.Params.MaxPositions == 0 {
+		req.Params.MaxPositions = def.MaxPositions
+	}
+	if req.Params.StopLossPct == 0 {
+		req.Params.StopLossPct = def.StopLossPct
+	}
+	if req.Params.TakeProfitPct == 0 {
+		req.Params.TakeProfitPct = def.TakeProfitPct
+	}
+	if req.Params.MaxHoldDays == 0 {
+		req.Params.MaxHoldDays = def.MaxHoldDays
+	}
+	if req.Params.FeeRate == 0 {
+		req.Params.FeeRate = def.FeeRate
+	}
+	if req.Params.TaxRate == 0 {
+		req.Params.TaxRate = def.TaxRate
+	}
 
 	paramsJSON, _ := json.Marshal(req.Params)
 
@@ -102,15 +124,15 @@ func (h *BacktestHandler) Run(c *gin.Context) {
 
 	// 儲存結果
 	now := time.Now()
-	job.Status        = "completed"
-	job.CompletedAt   = &now
-	job.TotalReturn   = res.TotalReturn
-	job.AnnualReturn  = res.AnnualReturn
-	job.MaxDrawdown   = res.MaxDrawdown
-	job.WinRate       = res.WinRate
-	job.SharpeRatio   = res.SharpeRatio
-	job.TotalTrades   = res.TotalTrades
-	job.Progress      = 100
+	job.Status = "completed"
+	job.CompletedAt = &now
+	job.TotalReturn = res.TotalReturn
+	job.AnnualReturn = res.AnnualReturn
+	job.MaxDrawdown = res.MaxDrawdown
+	job.WinRate = res.WinRate
+	job.SharpeRatio = res.SharpeRatio
+	job.TotalTrades = res.TotalTrades
+	job.Progress = 100
 	h.db.Save(&job)
 
 	if len(res.Trades) > 0 {

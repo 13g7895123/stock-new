@@ -8,12 +8,12 @@ type StockChipScore struct {
 	ID                 uint      `gorm:"primaryKey;autoIncrement"       json:"id"`
 	Symbol             string    `gorm:"type:varchar(10);not null;uniqueIndex" json:"symbol"`
 	CalcDate           time.Time `gorm:"type:date;not null"             json:"calc_date"`
-	TotalScore         float64   `gorm:"type:numeric(5,2);not null"     json:"total_score"`          // 0~100
-	InstitutionalScore float64   `gorm:"type:numeric(5,2);not null"     json:"institutional_score"`  // 三大法人面（35%）
-	MajorScore         float64   `gorm:"type:numeric(5,2);not null"     json:"major_score"`          // 主力券商面（35%）
-	ChipsPyramidScore  float64   `gorm:"type:numeric(5,2);not null"     json:"chips_pyramid_score"`  // 大戶持股面（15%）
-	WinrateScore       float64   `gorm:"type:numeric(5,2);not null"     json:"winrate_score"`        // 勝率面（15%）
-	Breakdown          string    `gorm:"type:jsonb;default:'{}'"`       // 各維度細節（JSON 字串）
+	TotalScore         float64   `gorm:"type:numeric(5,2);not null"     json:"total_score"`         // 0~100
+	InstitutionalScore float64   `gorm:"type:numeric(5,2);not null"     json:"institutional_score"` // 三大法人面（35%）
+	MajorScore         float64   `gorm:"type:numeric(5,2);not null"     json:"major_score"`         // 主力券商面（35%）
+	ChipsPyramidScore  float64   `gorm:"type:numeric(5,2);not null"     json:"chips_pyramid_score"` // 大戶持股面（15%）
+	WinrateScore       float64   `gorm:"type:numeric(5,2);not null"     json:"winrate_score"`       // 勝率面（15%）
+	Breakdown          string    `gorm:"type:jsonb;default:'{}'"`                                   // 各維度細節（JSON 字串）
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 

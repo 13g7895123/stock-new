@@ -229,8 +229,8 @@ func (h *DividendHandler) Status(c *gin.Context) {
 	var latest time.Time
 	h.db.Model(&models.Dividend{}).Select("MAX(created_at)").Scan(&latest)
 	c.JSON(http.StatusOK, gin.H{
-		"running":    running,
-		"total":      count,
+		"running":     running,
+		"total":       count,
 		"last_synced": latest,
 	})
 }

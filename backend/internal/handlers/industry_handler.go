@@ -22,11 +22,11 @@ func NewIndustryHandler(db *gorm.DB) *IndustryHandler {
 // ── 回傳結構 ──────────────────────────────────────────────────────────────────
 
 type IndustryFlowDay struct {
-	Date        string  `json:"date"`
-	ForeignNet  int64   `json:"foreign_net"`  // 張
-	TrustNet    int64   `json:"trust_net"`
-	DealerNet   int64   `json:"dealer_net"`
-	TotalNet    int64   `json:"total_net"`
+	Date       string `json:"date"`
+	ForeignNet int64  `json:"foreign_net"` // 張
+	TrustNet   int64  `json:"trust_net"`
+	DealerNet  int64  `json:"dealer_net"`
+	TotalNet   int64  `json:"total_net"`
 }
 
 type IndustryFlowRow struct {
@@ -36,13 +36,13 @@ type IndustryFlowRow struct {
 }
 
 type IndustryStockRow struct {
-	Symbol      string  `json:"symbol"`
-	Name        string  `json:"name"`
-	Date        string  `json:"date"`
-	ForeignNet  int64   `json:"foreign_net"`
-	TrustNet    int64   `json:"trust_net"`
-	DealerNet   int64   `json:"dealer_net"`
-	TotalNet    int64   `json:"total_net"`
+	Symbol     string `json:"symbol"`
+	Name       string `json:"name"`
+	Date       string `json:"date"`
+	ForeignNet int64  `json:"foreign_net"`
+	TrustNet   int64  `json:"trust_net"`
+	DealerNet  int64  `json:"dealer_net"`
+	TotalNet   int64  `json:"total_net"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
