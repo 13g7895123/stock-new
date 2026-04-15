@@ -254,9 +254,20 @@ function drawChart() {
   const barW  = drawW / n
   const candW = Math.max(1, Math.min(barW * 0.65, 14))
 
-  // Price range from visible slice
-  const pMin = slice.reduce((m, d) => Math.min(m, d.low), Infinity)   * 0.9975
-  const pMax = slice.reduce((m, d) => Math.max(m, d.high), -Infinity) * 1.0025
+  // 檢查是否有即時資料需要顯示
+  const hasRealtime = realtime.value?.is_trading && realtime.value.price > 0 && realtime.value.open > 0
+
+  // Price range from visible slice (包含即時資料)
+  let pMin = slice.reduce((m, d) => Math.min(m, d.low), Infinity)   * 0.9975
+  let pMax = slice.reduce((m, d) => Math.max(m, d.high), -Infinity) * 1.0025
+  
+  // 如果有即時資料，擴展價格範圍
+  if (hasRealtime) {
+    const rt = realtime.value!
+    pMin = Math.min(pMin, rt.low) * 0.9975
+    pMax = Math.max(pMax, rt.high) * 1.0025
+  }
+
   const vMax = (slice.reduce((m, d) => Math.max(m, d.volume), 0) * 1.05) || 1
 
   const xOf    = (i: number) => i * barW + barW / 2
@@ -332,6 +343,64 @@ function drawChart() {
     ctx.fillRect(x - candW / 2, top, candW, volTop + volH - top)
   }
 
+  // ── Realtime K 棒（盤中即時，在最右側繪製）────────────────────
+  if (hasRealtime) {
+    const rt = realtime.value!
+    // 計算即時 K 棒的 X 位置（在最後一根歷史 K 棒右側，留一點間隔）
+    const rtX = xOf(n - 1) + barW * 1.2
+    const rtIsUp = rt.price >= rt.open
+    const rtCol = rtIsUp ? c.up : c.dn
+    const rtColAlpha = rtIsUp ? upVolAlpha : dnVolAlpha
+
+    // 繪製即時 K 棒的 Wick（影線）- 使用虛線以示區別
+    ctx.strokeStyle = rtCol
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([2, 2])  // 虛線
+    ctx.beginPath()
+    ctx.moveTo(rtX, yPrice(rt.high))
+    ctx.lineTo(rtX, yPrice(rt.low))
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // 繪製即時 K 棒的 Body（實體）
+    const rtY1 = Math.min(yPrice(rt.open), yPrice(rt.price))
+    const rtBH = Math.max(1, Math.abs(yPrice(rt.price) - yPrice(rt.open)))
+    ctx.fillStyle = rtCol
+    ctx.globalAlpha = 0.8  // 稍微透明以示區別
+    ctx.fillRect(rtX - candW / 2, rtY1, candW, rtBH)
+    ctx.globalAlpha = 1.0
+
+    // 繪製即時成交量
+    if (rt.volume > 0) {
+      const rtVolY = yVol(rt.volume * 1000)  // 轉換成股數（realtime.volume 是張數）
+      ctx.fillStyle = rtColAlpha
+      ctx.globalAlpha = 0.7
+      ctx.fillRect(rtX - candW / 2, rtVolY, candW, volTop + volH - rtVolY)
+      ctx.globalAlpha = 1.0
+    }
+
+    // 在即時 K 棒上方標註「即時」
+    ctx.fillStyle = rtCol
+    ctx.font = 'bold 9px "DM Sans", system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('即時', rtX, PAD_T + 10)
+
+    // 在右側價格軸標註即時價格（帶背景）
+    const rtPriceY = yPrice(rt.price)
+    const priceText = rt.price.toFixed(2)
+    ctx.font = 'bold 10px "DM Sans", system-ui, sans-serif'
+    ctx.textAlign = 'right'
+    const textW = ctx.measureText(priceText).width
+    
+    // 繪製背景矩形
+    ctx.fillStyle = rtCol
+    ctx.fillRect(W - textW - 8, rtPriceY - 9, textW + 6, 13)
+    
+    // 繪製白色文字
+    ctx.fillStyle = isDark.value ? 'oklch(100% 0 0)' : 'oklch(100% 0 0)'
+    ctx.fillText(priceText, W - 4, rtPriceY + 1)
+  }
+
   // ── MA Lines (use full data for warmup, draw only visible range)
   ctx.setLineDash([])
   for (const ma of maLines.value) {
@@ -371,50 +440,6 @@ function drawChart() {
     ctx.fillText(price.toFixed(2), W - 4, y - 3)
   }
   ctx.setLineDash([])
-
-  // ── Realtime Price Line (盤中即時價格線)
-  if (realtime.value?.is_trading && realtime.value.price > 0) {
-    const rtPrice = realtime.value.price
-    const y = yPrice(rtPrice)
-    if (y >= PAD_T && y <= PAD_T + priceH) {
-      const isUp = realtime.value.change >= 0
-      const rtCol = isUp 
-        ? (isDark.value ? 'rgba(224,82,82,0.85)' : 'rgba(201,53,53,0.85)')
-        : (isDark.value ? 'rgba(61,170,107,0.85)' : 'rgba(31,138,80,0.85)')
-      
-      // 畫實線
-      ctx.strokeStyle = rtCol
-      ctx.lineWidth   = 2
-      ctx.setLineDash([])
-      ctx.beginPath()
-      ctx.moveTo(0, y)
-      ctx.lineTo(drawW, y)
-      ctx.stroke()
-      
-      // 價格標籤背景
-      const labelText = rtPrice.toFixed(2)
-      ctx.font = 'bold 11px "DM Sans", system-ui, sans-serif'
-      ctx.textAlign = 'right'
-      const textW = ctx.measureText(labelText).width
-      const labelPad = 6
-      const labelX = W - 4
-      const labelY = y - 3
-      
-      // 畫一個小的背景矩形
-      ctx.fillStyle = rtCol
-      ctx.fillRect(labelX - textW - labelPad, labelY - 11, textW + labelPad, 15)
-      
-      // 畫白色文字
-      ctx.fillStyle = isDark.value ? 'oklch(97% 0.01 220)' : 'oklch(100% 0 0)'
-      ctx.fillText(labelText, labelX - labelPad/2, labelY)
-      
-      // 在左側添加一個小標籤指示「即時」
-      ctx.textAlign = 'left'
-      ctx.font = 'bold 9px "DM Sans", system-ui, sans-serif'
-      ctx.fillStyle = rtCol
-      ctx.fillText('即時', 4, y - 3)
-    }
-  }
 
   // ── Crosshair
   const hi = hoveredIdx.value
