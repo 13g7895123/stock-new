@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useAppPrefs } from '~/composables/useAppPrefs'
 
 const { isDark, isClassic, toggleTheme, setTheme, setStyle } = useAppPrefs()
@@ -46,6 +46,18 @@ interface DisplayPool {
   description: string
 }
 
+interface RealtimeQuote {
+  symbol: string
+  price: number
+  open: number
+  high: number
+  low: number
+  change: number
+  change_pct: number
+  volume: number
+  timestamp: string
+}
+
 // ─── API ────────────────────────────────────────────────────────
 const { data: groups, refresh: refreshGroups } = await useFetch<StockGroup[]>('/api/groups')
 const { data: tags, refresh: refreshTags } = await useFetch<Tag[]>('/api/tags')
@@ -58,6 +70,62 @@ const activePool = ref<DisplayPool | null>(null)
 const poolStocks = ref<Stock[]>([])
 const poolLoading = ref(false)
 const settingsOpen = ref(false)
+
+// ─── Trading Hours & Realtime ───────────────────────────────────
+function isTradingHours(): boolean {
+  const now = new Date()
+  const day = now.getDay()           // 0=Sun, 6=Sat
+  if (day === 0 || day === 6) return false
+  const t = now.getHours() * 60 + now.getMinutes()
+  return t >= 9 * 60 && t <= 13 * 60 + 30
+}
+
+const realtimeMap = ref<Record<string, RealtimeQuote>>({})
+const isLive = ref(false)
+const lastUpdateTime = ref('')
+let realtimeTimer: ReturnType<typeof setInterval> | null = null
+
+async function fetchRealtimeForPool() {
+  if (poolStocks.value.length === 0) return
+  const results = await Promise.allSettled(
+    poolStocks.value.map(s => $fetch<RealtimeQuote>(`/api/realtime/${s.symbol}`))
+  )
+  const newMap: Record<string, RealtimeQuote> = { ...realtimeMap.value }
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled' && r.value?.price > 0) {
+      newMap[poolStocks.value[i].symbol] = r.value
+    }
+  })
+  realtimeMap.value = newMap
+  const now = new Date()
+  lastUpdateTime.value = now.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function startRealtimePolling() {
+  stopRealtimePolling()
+  if (!isTradingHours()) return
+  isLive.value = true
+  fetchRealtimeForPool()
+  realtimeTimer = setInterval(() => {
+    if (isTradingHours()) {
+      fetchRealtimeForPool()
+    } else {
+      stopRealtimePolling()
+    }
+  }, 10_000)
+}
+
+function stopRealtimePolling() {
+  if (realtimeTimer) {
+    clearInterval(realtimeTimer)
+    realtimeTimer = null
+  }
+  isLive.value = false
+  realtimeMap.value = {}
+  lastUpdateTime.value = ''
+}
+
+onBeforeUnmount(() => stopRealtimePolling())
 
 onMounted(() => {
   try {
@@ -106,6 +174,15 @@ const displayPools = computed<DisplayPool[]>(() => {
 const allGroups = computed(() => groups.value ?? [])
 const allTags = computed(() => tags.value ?? [])
 
+// ─── Computed: merge static + realtime ─────────────────────────
+const displayStocks = computed(() =>
+  poolStocks.value.map(s => {
+    const rt = realtimeMap.value[s.symbol]
+    if (!rt || rt.price <= 0) return s
+    return { ...s, price: rt.price, change: rt.change, change_pct: rt.change_pct, volume: rt.volume }
+  })
+)
+
 // ─── Pool Actions ───────────────────────────────────────────────
 async function openPool(pool: DisplayPool) {
   if (activePool.value?.type === pool.type && activePool.value?.id === pool.id) {
@@ -116,10 +193,12 @@ async function openPool(pool: DisplayPool) {
   activePool.value = pool
   poolLoading.value = true
   poolStocks.value = []
+  stopRealtimePolling()
   try {
     const param = pool.type === 'group' ? `group_id=${pool.id}` : `tag_id=${pool.id}`
     const result = await $fetch<Stock[]>(`/api/stocks?${param}`)
     poolStocks.value = Array.isArray(result) ? result : []
+    startRealtimePolling()  // 載入完成後開始即時輪詢
   } catch {
     poolStocks.value = []
   } finally {
@@ -128,6 +207,7 @@ async function openPool(pool: DisplayPool) {
 }
 
 function closePool() {
+  stopRealtimePolling()
   activePool.value = null
   poolStocks.value = []
 }
@@ -355,7 +435,14 @@ const today = new Date().toLocaleDateString('zh-TW', {
                 </p>
               </div>
             </div>
-            <button class="pool-detail__close" @click="closePool">✕ 收起</button>
+            <div class="pool-detail__right">
+              <div v-if="isLive" class="live-badge">
+                <span class="live-dot" />
+                LIVE
+                <span v-if="lastUpdateTime" class="live-time">{{ lastUpdateTime }}</span>
+              </div>
+              <button class="pool-detail__close" @click="closePool">✕ 收起</button>
+            </div>
           </div>
 
           <div v-if="poolLoading" class="pool-loading">
@@ -368,7 +455,7 @@ const today = new Date().toLocaleDateString('zh-TW', {
 
           <div v-else class="stock-grid">
             <NuxtLink
-              v-for="stock in poolStocks"
+              v-for="stock in displayStocks"
               :key="stock.symbol"
               :to="`/stocks/${stock.symbol}`"
               class="stock-card"
@@ -812,6 +899,7 @@ const today = new Date().toLocaleDateString('zh-TW', {
   margin-bottom: 20px;
 }
 .pool-detail__info { display: flex; align-items: center; gap: 12px; }
+.pool-detail__right { display: flex; align-items: center; gap: 12px; }
 .pool-detail__name { font-size: 1.15rem; font-weight: 700; color: var(--text-1); }
 .pool-detail__meta { font-size: 0.78rem; color: var(--text-3); margin-top: 2px; }
 
@@ -929,6 +1017,40 @@ const today = new Date().toLocaleDateString('zh-TW', {
   font-size: 0.7rem;
   color: var(--text-3);
   margin-top: 4px;
+}
+
+/* ── Live Badge ──────────────────────────────────────────────── */
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: var(--green);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+
+.live-time {
+  font-weight: 400;
+  opacity: 0.75;
+  letter-spacing: 0;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
 }
 
 /* ── Spin ─────────────────────────────────────────────────────── */
