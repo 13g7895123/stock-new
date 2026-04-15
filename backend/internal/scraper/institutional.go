@@ -45,10 +45,25 @@ type InstitutionalRecord struct {
 // ─── TWSE T86 ────────────────────────────────────────────────────────────────
 
 type twseT86Response struct {
-	Stat   string     `json:"stat"`
-	Date   string     `json:"date"`
-	Fields []string   `json:"fields"`
-	Data   [][]string `json:"data"`
+	Stat   string               `json:"stat"`
+	Date   string               `json:"date"`
+	Fields []string             `json:"fields"`
+	Data   [][]json.RawMessage  `json:"data"`
+}
+
+// rawStr 將 json.RawMessage 轉成字串，同時相容 JSON string（"18,907,101"）與 number（18907101）。
+func rawStr(r json.RawMessage) string {
+	if len(r) == 0 {
+		return ""
+	}
+	if r[0] == '"' {
+		var s string
+		if json.Unmarshal(r, &s) == nil {
+			return s
+		}
+	}
+	// number 或其他型別：直接回傳原始文字
+	return string(r)
 }
 
 // FetchTWSEInstitutional 抓取上市三大法人當日買賣超（或指定日期）
@@ -91,7 +106,7 @@ func FetchTWSEInstitutional(date time.Time) ([]InstitutionalRecord, error) {
 		if len(row) < 19 {
 			continue
 		}
-		symbol := strings.TrimSpace(row[0])
+		symbol := strings.TrimSpace(rawStr(row[0]))
 		if !regularStockPattern.MatchString(symbol) {
 			continue
 		}
@@ -107,14 +122,14 @@ func FetchTWSEInstitutional(date time.Time) ([]InstitutionalRecord, error) {
 			Symbol:      symbol,
 			Date:        date,
 			Market:      "TWSE",
-			ForeignBuy:  parseCommaSep(row[2]),
-			ForeignSell: parseCommaSep(row[3]),
-			ForeignNet:  parseCommaSep(row[4]),
-			TrustBuy:    parseCommaSep(row[8]),
-			TrustSell:   parseCommaSep(row[9]),
-			TrustNet:    parseCommaSep(row[10]),
-			DealerNet:   parseCommaSep(row[11]),
-			TotalNet:    parseCommaSep(row[18]),
+			ForeignBuy:  parseCommaSep(rawStr(row[2])),
+			ForeignSell: parseCommaSep(rawStr(row[3])),
+			ForeignNet:  parseCommaSep(rawStr(row[4])),
+			TrustBuy:    parseCommaSep(rawStr(row[8])),
+			TrustSell:   parseCommaSep(rawStr(row[9])),
+			TrustNet:    parseCommaSep(rawStr(row[10])),
+			DealerNet:   parseCommaSep(rawStr(row[11])),
+			TotalNet:    parseCommaSep(rawStr(row[18])),
 		}
 		records = append(records, rec)
 	}
