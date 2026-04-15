@@ -94,6 +94,28 @@ const { data: majorData } = await useFetch<MajorData>(
 const { isDark, appStyle, isBento, isClassic, toggleTheme, setTheme, setStyle } = useAppPrefs()
 const settingsOpen = ref(false)
 
+// ── 即時報價（移到前面避免初始化順序問題）────────────────────────────────
+interface RealtimeQuote {
+  symbol: string
+  name: string
+  price: number
+  open: number
+  high: number
+  low: number
+  prev_close: number
+  change: number
+  change_pct: number
+  volume: number
+  trade_time: string
+  trade_date: string
+  is_trading: boolean
+}
+
+const realtime  = ref<RealtimeQuote | null>(null)
+const rtLoading = ref(false)
+const rtError   = ref(false)
+let   rtTimer: ReturnType<typeof setInterval> | null = null
+
 // ── Canvas K-line Chart ───────────────────
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const canvasWrap = ref<HTMLElement | null>(null)
@@ -549,28 +571,7 @@ function setRange(r: typeof ranges[0]) {
   refreshPrices()
 }
 
-// ── 即時報價 ────────────────────────────────
-interface RealtimeQuote {
-  symbol: string
-  name: string
-  price: number
-  open: number
-  high: number
-  low: number
-  prev_close: number
-  change: number
-  change_pct: number
-  volume: number
-  trade_time: string
-  trade_date: string
-  is_trading: boolean
-}
-
-const realtime  = ref<RealtimeQuote | null>(null)
-const rtLoading = ref(false)
-const rtError   = ref(false)
-let   rtTimer: ReturnType<typeof setInterval> | null = null
-
+// ── 即時報價相關函數 ────────────────────────────────
 function isTradingHours(): boolean {
   const now = new Date()
   const day = now.getDay()                     // 0=日, 6=六
