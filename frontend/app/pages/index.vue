@@ -1131,9 +1131,14 @@ const settingsOpen = ref(false)
           <p class="card-eyebrow">Watchlist · 關注股池</p>
           <h2 class="card-title">關注股池</h2>
           <p class="card-desc">設定你關注的群組與標籤，快速查看各池子的持股概況。</p>
-          <NuxtLink to="/watchlist" class="ghost-btn">
-            前往股池 <span class="ghost-btn__arr">→</span>
-          </NuxtLink>
+          <div style="display: flex; gap: 8px;">
+            <NuxtLink to="/watchlist" class="ghost-btn">
+              前往股池 <span class="ghost-btn__arr">→</span>
+            </NuxtLink>
+            <NuxtLink to="/manage-pools" class="ghost-btn">
+              批次管理 <span class="ghost-btn__arr">⚙</span>
+            </NuxtLink>
+          </div>
         </article>
 
         <!-- Card 3: Sync Stocks (1 col) -->
