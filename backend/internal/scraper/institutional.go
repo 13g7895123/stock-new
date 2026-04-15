@@ -123,19 +123,6 @@ func FetchTWSEInstitutional(date time.Time) ([]InstitutionalRecord, error) {
 
 // ─── TPEX ─────────────────────────────────────────────────────────────────────
 
-type tpexInstitutionalItem struct {
-	Date              string `json:"date"`
-	SecuritiesCode    string `json:"SecuritiesCompanyCode"`
-	ForeignBuyShares  string `json:"ForeignInvestorBuyShares"`
-	ForeignSellShares string `json:"ForeignInvestorSellShares"`
-	ForeignNetShares  string `json:"ForeignInvestorNetBuySellShares"`
-	TrustBuyShares    string `json:"InvestmentTrustBuyShares"`
-	TrustSellShares   string `json:"InvestmentTrustSellShares"`
-	TrustNetShares    string `json:"InvestmentTrustNetBuySellShares"`
-	DealerNetShares   string `json:"DealerNetBuySellShares"`
-	TotalNetShares    string `json:"TotalInstitutionalNetBuySellShares"`
-}
-
 // FetchTPEXInstitutional 抓取上櫃三大法人當日買賣超
 func FetchTPEXInstitutional(date time.Time) ([]InstitutionalRecord, error) {
 	dateStr := fmt.Sprintf("%d/%02d/%02d",
@@ -165,24 +152,36 @@ func FetchTPEXInstitutional(date time.Time) ([]InstitutionalRecord, error) {
 		return nil, fmt.Errorf("TPEX institutional unexpected status: %d", resp.StatusCode)
 	}
 
-	// TPEX 回傳格式：{"iTotalRecords":N,"aaData":[["代號","名稱","外資買","外資賣","外資超",...],...]}}
+	// TPEX 新格式（2025 年後）：
+	// {"stat":"ok","date":"YYYYMMDD","tables":[{"data":[["代號","名稱",...],...],...},{}]}
+	// tables[0].data 欄位（共 24 欄，0-indexed）：
+	// 0=代號, 1=名稱,
+	// 2=外資買進, 3=外資賣出, 4=外資買賣超（不含外資自營）,
+	// 5=外資自營買進, 6=外資自營賣出, 7=外資自營買賣超,
+	// 8=投信買進, 9=投信賣出, 10=投信買賣超,
+	// 11=自營(自行)買進, 12=自營(自行)賣出, 13=自營(自行)買賣超,
+	// 14=自營(避險)買進, 15=自營(避險)賣出, 16=自營(避險)買賣超,
+	// 17=自營合計買進, 18=自營合計賣出, 19=自營合計買賣超,
+	// 20=三大法人合計買進, 21=三大法人合計賣出, 22=三大法人合計買賣超,
+	// 23=三大法人買賣超股數合計
 	var raw struct {
-		TotalRecords int        `json:"iTotalRecords"`
-		Data         [][]string `json:"aaData"`
+		Stat   string `json:"stat"`
+		Tables []struct {
+			Data [][]string `json:"data"`
+		} `json:"tables"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decode TPEX institutional failed: %w", err)
 	}
+	if raw.Stat != "ok" || len(raw.Tables) == 0 {
+		// 非交易日或無資料
+		return nil, nil
+	}
 
-	records := make([]InstitutionalRecord, 0, len(raw.Data))
-	for _, row := range raw.Data {
-		// TPEX aaData 欄位依序：
-		// 0=代號, 1=名稱,
-		// 2=外資買進, 3=外資賣出, 4=外資買賣超,
-		// 5=投信買進, 6=投信賣出, 7=投信買賣超,
-		// 8=自營商買賣超(自行), 9=自營商買賣超(避險), 10=自營商合計買賣超,
-		// 11=三大法人合計買賣超
-		if len(row) < 12 {
+	rows := raw.Tables[0].Data
+	records := make([]InstitutionalRecord, 0, len(rows))
+	for _, row := range rows {
+		if len(row) < 24 {
 			continue
 		}
 		symbol := strings.TrimSpace(row[0])
@@ -197,11 +196,11 @@ func FetchTPEXInstitutional(date time.Time) ([]InstitutionalRecord, error) {
 			ForeignBuy:  parseCommaSep(row[2]),
 			ForeignSell: parseCommaSep(row[3]),
 			ForeignNet:  parseCommaSep(row[4]),
-			TrustBuy:    parseCommaSep(row[5]),
-			TrustSell:   parseCommaSep(row[6]),
-			TrustNet:    parseCommaSep(row[7]),
-			DealerNet:   parseCommaSep(row[10]),
-			TotalNet:    parseCommaSep(row[11]),
+			TrustBuy:    parseCommaSep(row[8]),
+			TrustSell:   parseCommaSep(row[9]),
+			TrustNet:    parseCommaSep(row[10]),
+			DealerNet:   parseCommaSep(row[19]),
+			TotalNet:    parseCommaSep(row[23]),
 		}
 		records = append(records, rec)
 	}

@@ -1,4 +1,5 @@
 package backtest
+
 // backtest/calculator.go — 回測計算引擎
 
 import (
@@ -14,10 +15,10 @@ import (
 // StrategyParams 回測策略參數
 type StrategyParams struct {
 	// 訊號條件（技術指標）
-	EntryMAShort int     `json:"entry_ma_short"` // 短均線週期（預設 5）
-	EntryMALong  int     `json:"entry_ma_long"`  // 長均線週期（預設 20）
-	ExitMAShort  int     `json:"exit_ma_short"`  // 出場短均線（預設 5）
-	ExitMALong   int     `json:"exit_ma_long"`   // 出場長均線（預設 20）
+	EntryMAShort int `json:"entry_ma_short"` // 短均線週期（預設 5）
+	EntryMALong  int `json:"entry_ma_long"`  // 長均線週期（預設 20）
+	ExitMAShort  int `json:"exit_ma_short"`  // 出場短均線（預設 5）
+	ExitMALong   int `json:"exit_ma_long"`   // 出場長均線（預設 20）
 
 	// 資金管理
 	CapitalPerTrade float64 `json:"capital_per_trade"` // 每次進場用幾%資金（0~1）
@@ -29,8 +30,8 @@ type StrategyParams struct {
 	MaxHoldDays   int     `json:"max_hold_days"`   // 最長持倉天數
 
 	// 費用
-	FeeRate   float64 `json:"fee_rate"`   // 手續費率（預設 0.001425）
-	TaxRate   float64 `json:"tax_rate"`   // 成交稅率（預設 0.003，賣方）
+	FeeRate float64 `json:"fee_rate"` // 手續費率（預設 0.001425）
+	TaxRate float64 `json:"tax_rate"` // 成交稅率（預設 0.003，賣方）
 }
 
 // DefaultParams 回傳預設策略參數
@@ -87,7 +88,7 @@ func Run(
 	}
 
 	maShort := calcMA(closes, p.EntryMAShort)
-	maLong  := calcMA(closes, p.EntryMALong)
+	maLong := calcMA(closes, p.EntryMALong)
 
 	capital := initialCapital
 	var trades []models.BacktestTrade
@@ -119,8 +120,8 @@ func Run(
 		var remaining []Position
 		for _, pos := range positions {
 			entryD, _ := time.Parse("2006-01-02", pos.EntryDate)
-			holdDays  := int(pr.Date.Sub(entryD).Hours() / 24)
-			pnlPct    := (price - pos.EntryPrice) / pos.EntryPrice
+			holdDays := int(pr.Date.Sub(entryD).Hours() / 24)
+			pnlPct := (price - pos.EntryPrice) / pos.EntryPrice
 
 			var reason string
 			switch {
@@ -141,10 +142,10 @@ func Run(
 
 			if reason != "" {
 				cost := float64(pos.Shares) * price
-				tax  := cost * p.TaxRate
-				fee  := cost * p.FeeRate
+				tax := cost * p.TaxRate
+				fee := cost * p.FeeRate
 				recv := cost - tax - fee
-				pnl  := recv - float64(pos.Shares)*pos.EntryPrice
+				pnl := recv - float64(pos.Shares)*pos.EntryPrice
 				capital += recv
 				trades = append(trades, models.BacktestTrade{
 					JobID:      jobID,
@@ -171,9 +172,9 @@ func Run(
 			prevMl := *maLong[i-1]
 			if prevMs < prevMl && ms >= ml && len(positions) < p.MaxPositions {
 				// 可動用資金
-				budget  := capital * p.CapitalPerTrade
-				cost1   := price * (1 + p.FeeRate)
-				shares  := int64(budget / cost1 / 1000) * 1000 // 取整張（1張=1000股）
+				budget := capital * p.CapitalPerTrade
+				cost1 := price * (1 + p.FeeRate)
+				shares := int64(budget/cost1/1000) * 1000 // 取整張（1張=1000股）
 				if shares > 0 {
 					spent := float64(shares)*price + float64(shares)*price*p.FeeRate
 					if spent <= capital {
@@ -213,14 +214,14 @@ func Run(
 	if len(prices) > 0 {
 		lastPr := prices[len(prices)-1]
 		lastPrice := lastPr.Close
-		lastDate  := lastPr.Date.Format("2006-01-02")
+		lastDate := lastPr.Date.Format("2006-01-02")
 		for _, pos := range positions {
 			entryD, _ := time.Parse("2006-01-02", pos.EntryDate)
-			holdDays  := int(lastPr.Date.Sub(entryD).Hours() / 24)
-			pnlPct    := (lastPrice - pos.EntryPrice) / pos.EntryPrice
-			cost      := float64(pos.Shares) * lastPrice
-			pnl       := cost*(1-lastPr.Close*0+1) - float64(pos.Shares)*lastPrice*(1+p.FeeRate) // simplified
-			pnl        = float64(pos.Shares)*(lastPrice-pos.EntryPrice) - float64(pos.Shares)*lastPrice*(p.FeeRate+p.TaxRate)
+			holdDays := int(lastPr.Date.Sub(entryD).Hours() / 24)
+			pnlPct := (lastPrice - pos.EntryPrice) / pos.EntryPrice
+			cost := float64(pos.Shares) * lastPrice
+			pnl := cost*(1-lastPr.Close*0+1) - float64(pos.Shares)*lastPrice*(1+p.FeeRate) // simplified
+			pnl = float64(pos.Shares)*(lastPrice-pos.EntryPrice) - float64(pos.Shares)*lastPrice*(p.FeeRate+p.TaxRate)
 			trades = append(trades, models.BacktestTrade{
 				JobID:      jobID,
 				Symbol:     symbol,
@@ -240,7 +241,9 @@ func Run(
 	// 統計
 	wins := 0
 	for _, t := range trades {
-		if t.PnL > 0 { wins++ }
+		if t.PnL > 0 {
+			wins++
+		}
 	}
 	totalTrades := len(trades)
 	winRate := 0.0
@@ -258,8 +261,8 @@ func Run(
 	annualReturn := 0.0
 	if len(equityCurve) >= 2 {
 		start, _ := time.Parse("2006-01-02", equityCurve[0].Date)
-		end, _   := time.Parse("2006-01-02", equityCurve[len(equityCurve)-1].Date)
-		years    := end.Sub(start).Hours() / 24 / 365
+		end, _ := time.Parse("2006-01-02", equityCurve[len(equityCurve)-1].Date)
+		years := end.Sub(start).Hours() / 24 / 365
 		if years > 0 {
 			annualReturn = (math.Pow(finalEquity/initialCapital, 1/years) - 1) * 100
 		}
@@ -274,8 +277,8 @@ func Run(
 	})
 
 	return Result{
-		Trades:      trades,
-		EquityCurve: equityCurve,
+		Trades:       trades,
+		EquityCurve:  equityCurve,
 		TotalReturn:  math.Round(totalReturn*100) / 100,
 		AnnualReturn: math.Round(annualReturn*100) / 100,
 		MaxDrawdown:  math.Round(maxDD*10000) / 100,
@@ -304,7 +307,9 @@ func calcMA(data []float64, period int) []*float64 {
 
 // calcSharpe 計算日報酬率的 Sharpe（無風險利率=0，年化）
 func calcSharpe(curve []models.BacktestEquityPoint) float64 {
-	if len(curve) < 2 { return 0 }
+	if len(curve) < 2 {
+		return 0
+	}
 	var dailyRet []float64
 	for i := 1; i < len(curve); i++ {
 		prev := curve[i-1].Equity
@@ -313,16 +318,24 @@ func calcSharpe(curve []models.BacktestEquityPoint) float64 {
 			dailyRet = append(dailyRet, (curr-prev)/prev)
 		}
 	}
-	if len(dailyRet) == 0 { return 0 }
+	if len(dailyRet) == 0 {
+		return 0
+	}
 	// 平均
 	mean := 0.0
-	for _, r := range dailyRet { mean += r }
+	for _, r := range dailyRet {
+		mean += r
+	}
 	mean /= float64(len(dailyRet))
 	// 標準差
 	variance := 0.0
-	for _, r := range dailyRet { variance += (r - mean) * (r - mean) }
+	for _, r := range dailyRet {
+		variance += (r - mean) * (r - mean)
+	}
 	variance /= float64(len(dailyRet))
 	std := math.Sqrt(variance)
-	if std == 0 { return 0 }
+	if std == 0 {
+		return 0
+	}
 	return mean / std * math.Sqrt(252) // 年化
 }
