@@ -1,6 +1,5 @@
 package backtest
 // backtest/calculator.go — 回測計算引擎
-package backtest
 
 import (
 	"math"
