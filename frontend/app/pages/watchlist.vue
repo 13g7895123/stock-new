@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useAppPrefs } from '~/composables/useAppPrefs'
 
 const { isDark, isClassic, toggleTheme, setTheme, setStyle } = useAppPrefs()
@@ -74,7 +74,7 @@ const settingsOpen = ref(false)
 // ─── Trading Hours & Realtime ───────────────────────────────────
 function isTradingHours(): boolean {
   const now = new Date()
-  const day = now.getDay()           // 0=Sun, 6=Sat
+  const day = now.getDay()
   if (day === 0 || day === 6) return false
   const t = now.getHours() * 60 + now.getMinutes()
   return t >= 9 * 60 && t <= 13 * 60 + 30
@@ -188,17 +188,21 @@ async function openPool(pool: DisplayPool) {
   if (activePool.value?.type === pool.type && activePool.value?.id === pool.id) {
     activePool.value = null
     poolStocks.value = []
+    batchSelectMode.value = false
+    selectedSymbols.value = []
     return
   }
   activePool.value = pool
   poolLoading.value = true
   poolStocks.value = []
+  batchSelectMode.value = false
+  selectedSymbols.value = []
   stopRealtimePolling()
   try {
     const param = pool.type === 'group' ? `group_id=${pool.id}` : `tag_id=${pool.id}`
     const result = await $fetch<Stock[]>(`/api/stocks?${param}`)
     poolStocks.value = Array.isArray(result) ? result : []
-    startRealtimePolling()  // 載入完成後開始即時輪詢
+    startRealtimePolling()
   } catch {
     poolStocks.value = []
   } finally {
@@ -210,6 +214,137 @@ function closePool() {
   stopRealtimePolling()
   activePool.value = null
   poolStocks.value = []
+  batchSelectMode.value = false
+  selectedSymbols.value = []
+}
+
+// ─── Add Stock Modal ─────────────────────────────────────────────
+const addModalOpen = ref(false)
+const addSearchQuery = ref('')
+const addSearchResults = ref<(Stock & { _inPool?: boolean })[]>([])
+const addSelectedSymbols = ref<string[]>([])
+const addSearching = ref(false)
+const addProcessing = ref(false)
+let addSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+function openAddModal() {
+  addModalOpen.value = true
+  addSearchQuery.value = ''
+  addSearchResults.value = []
+  addSelectedSymbols.value = []
+}
+
+function closeAddModal() {
+  addModalOpen.value = false
+  if (addSearchTimer) clearTimeout(addSearchTimer)
+}
+
+watch(addSearchQuery, (q) => {
+  if (addSearchTimer) clearTimeout(addSearchTimer)
+  if (!q.trim()) {
+    addSearchResults.value = []
+    return
+  }
+  addSearchTimer = setTimeout(async () => {
+    addSearching.value = true
+    try {
+      const res = await $fetch<Stock[]>(`/api/stocks?q=${encodeURIComponent(q.trim())}`)
+      const currentSymbols = new Set(poolStocks.value.map(s => s.symbol))
+      addSearchResults.value = (Array.isArray(res) ? res : []).slice(0, 30)
+        .map(s => ({ ...s, _inPool: currentSymbols.has(s.symbol) } as Stock & { _inPool: boolean }))
+    } catch {
+      addSearchResults.value = []
+    } finally {
+      addSearching.value = false
+    }
+  }, 300)
+})
+
+function toggleAddSelect(symbol: string) {
+  const idx = addSelectedSymbols.value.indexOf(symbol)
+  if (idx >= 0) addSelectedSymbols.value.splice(idx, 1)
+  else addSelectedSymbols.value.push(symbol)
+}
+
+async function confirmAddStocks() {
+  if (!activePool.value || addSelectedSymbols.value.length === 0) return
+  addProcessing.value = true
+  try {
+    const { type, id } = activePool.value
+    const base = type === 'group' ? `/api/groups/${id}/members` : `/api/tags/${id}/members`
+    await $fetch(base, { method: 'POST', body: { symbols: addSelectedSymbols.value } })
+    // 重新載入
+    const param = type === 'group' ? `group_id=${id}` : `tag_id=${id}`
+    const result = await $fetch<Stock[]>(`/api/stocks?${param}`)
+    poolStocks.value = Array.isArray(result) ? result : []
+    closeAddModal()
+  } catch (err) {
+    alert('新增失敗：' + (err as Error).message)
+  } finally {
+    addProcessing.value = false
+  }
+}
+
+// ─── Remove Stock ────────────────────────────────────────────────
+const removingSymbol = ref('')
+
+async function removeStock(symbol: string) {
+  if (!activePool.value) return
+  if (!confirm(`確定要從「${activePool.value.name}」移除 ${symbol}？`)) return
+  removingSymbol.value = symbol
+  try {
+    const { type, id } = activePool.value
+    const base = type === 'group' ? `/api/groups/${id}/members` : `/api/tags/${id}/members`
+    await $fetch(base, { method: 'DELETE', body: { symbols: [symbol] } })
+    poolStocks.value = poolStocks.value.filter(s => s.symbol !== symbol)
+  } catch (err) {
+    alert('移除失敗：' + (err as Error).message)
+  } finally {
+    removingSymbol.value = ''
+  }
+}
+
+// ─── Batch Remove ────────────────────────────────────────────────
+const batchSelectMode = ref(false)
+const selectedSymbols = ref<string[]>([])
+const batchRemoving = ref(false)
+
+function toggleBatchMode() {
+  batchSelectMode.value = !batchSelectMode.value
+  if (!batchSelectMode.value) selectedSymbols.value = []
+}
+
+function toggleSelectSymbol(symbol: string) {
+  const idx = selectedSymbols.value.indexOf(symbol)
+  if (idx >= 0) selectedSymbols.value.splice(idx, 1)
+  else selectedSymbols.value.push(symbol)
+}
+
+function selectAll() {
+  selectedSymbols.value = poolStocks.value.map(s => s.symbol)
+}
+
+function clearSelection() {
+  selectedSymbols.value = []
+}
+
+async function removeBatchSelected() {
+  if (!activePool.value || selectedSymbols.value.length === 0) return
+  if (!confirm(`確定要移除選取的 ${selectedSymbols.value.length} 檔股票？`)) return
+  batchRemoving.value = true
+  try {
+    const { type, id } = activePool.value
+    const base = type === 'group' ? `/api/groups/${id}/members` : `/api/tags/${id}/members`
+    await $fetch(base, { method: 'DELETE', body: { symbols: selectedSymbols.value } })
+    const removed = new Set(selectedSymbols.value)
+    poolStocks.value = poolStocks.value.filter(s => !removed.has(s.symbol))
+    selectedSymbols.value = []
+    batchSelectMode.value = false
+  } catch (err) {
+    alert('批次移除失敗：' + (err as Error).message)
+  } finally {
+    batchRemoving.value = false
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
@@ -441,6 +576,35 @@ const today = new Date().toLocaleDateString('zh-TW', {
                 LIVE
                 <span v-if="lastUpdateTime" class="live-time">{{ lastUpdateTime }}</span>
               </div>
+              <!-- Batch Remove Controls -->
+              <template v-if="batchSelectMode">
+                <button class="pd-action-btn pd-action-btn--danger" :disabled="selectedSymbols.length === 0 || batchRemoving" @click="removeBatchSelected">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                    <path d="M3 6h10M6 2h4M5 6l.5 7h5L11 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  {{ batchRemoving ? '移除中…' : `移除選取 (${selectedSymbols.length})` }}
+                </button>
+                <button class="pd-action-btn pd-action-btn--ghost" @click="selectAll">全選</button>
+                <button class="pd-action-btn pd-action-btn--ghost" @click="clearSelection">清除</button>
+                <button class="pd-action-btn pd-action-btn--ghost" @click="toggleBatchMode">取消</button>
+              </template>
+              <template v-else>
+                <button class="pd-action-btn pd-action-btn--primary" @click="openAddModal">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                    <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                  新增股票
+                </button>
+                <button v-if="poolStocks.length > 0" class="pd-action-btn pd-action-btn--ghost" @click="toggleBatchMode">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                    <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+                    <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+                    <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M12 11.5v-2M11 9.5h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  </svg>
+                  批次移除
+                </button>
+              </template>
               <button class="pool-detail__close" @click="closePool">✕ 收起</button>
             </div>
           </div>
@@ -454,41 +618,139 @@ const today = new Date().toLocaleDateString('zh-TW', {
           </div>
 
           <div v-else class="stock-grid">
-            <NuxtLink
+            <div
               v-for="stock in displayStocks"
               :key="stock.symbol"
-              :to="`/stocks/${stock.symbol}`"
-              class="stock-card"
-              :class="colorClass(stock.change)"
+              class="stock-card-wrap"
+              :class="{ 'batch-mode': batchSelectMode, 'selected': selectedSymbols.includes(stock.symbol) }"
+              @click="batchSelectMode ? toggleSelectSymbol(stock.symbol) : undefined"
             >
-              <div class="stock-card__head">
-                <span class="stock-card__symbol">{{ stock.symbol }}</span>
-                <span
-                  class="stock-card__pct"
-                  :class="colorClass(stock.change_pct)"
-                >{{ stock.price > 0 ? fmtPct(stock.change_pct) : '—' }}</span>
-              </div>
-              <p class="stock-card__name">{{ stock.name }}</p>
-              <div class="stock-card__price-row">
-                <span class="stock-card__price">{{ fmtPrice(stock.price) }}</span>
-                <span
-                  v-if="stock.price > 0"
-                  class="stock-card__change"
-                  :class="colorClass(stock.change)"
-                >
-                  {{ stock.change > 0 ? '+' : '' }}{{ stock.change.toFixed(2) }}
-                </span>
-              </div>
-              <p v-if="stock.volume > 0" class="stock-card__vol">
-                量 {{ stock.volume.toLocaleString() }}
-              </p>
-            </NuxtLink>
+              <!-- Batch select checkbox -->
+              <span v-if="batchSelectMode" class="stock-card__checkbox">
+                <svg v-if="selectedSymbols.includes(stock.symbol)" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <rect x="1" y="1" width="14" height="14" rx="3" fill="oklch(47% 0.21 264)" stroke="oklch(47% 0.21 264)" stroke-width="1.5"/>
+                  <path d="M4.5 8l2.5 2.5 5-5" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <rect x="1" y="1" width="14" height="14" rx="3" stroke="currentColor" stroke-width="1.5"/>
+                </svg>
+              </span>
+              <!-- Remove button (non-batch mode) -->
+              <button
+                v-else
+                class="stock-card__remove"
+                :disabled="removingSymbol === stock.symbol"
+                @click.prevent.stop="removeStock(stock.symbol)"
+                title="從池子移除"
+              >
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+                  <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </button>
+              <NuxtLink
+                :to="`/stocks/${stock.symbol}`"
+                class="stock-card"
+                :class="colorClass(stock.change)"
+              >
+                <div class="stock-card__head">
+                  <span class="stock-card__symbol">{{ stock.symbol }}</span>
+                  <span
+                    class="stock-card__pct"
+                    :class="colorClass(stock.change_pct)"
+                  >{{ stock.price > 0 ? fmtPct(stock.change_pct) : '—' }}</span>
+                </div>
+                <p class="stock-card__name">{{ stock.name }}</p>
+                <div class="stock-card__price-row">
+                  <span class="stock-card__price">{{ fmtPrice(stock.price) }}</span>
+                  <span
+                    v-if="stock.price > 0"
+                    class="stock-card__change"
+                    :class="colorClass(stock.change)"
+                  >
+                    {{ stock.change > 0 ? '+' : '' }}{{ stock.change.toFixed(2) }}
+                  </span>
+                </div>
+                <p v-if="stock.volume > 0" class="stock-card__vol">
+                  量 {{ stock.volume.toLocaleString() }}
+                </p>
+              </NuxtLink>
+            </div>
+
           </div>
         </section>
       </Transition>
 
     </main>
-  </div>
+
+  <!-- ══ Add Stock Modal ══ -->
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="addModalOpen" class="add-modal-overlay" @click.self="closeAddModal">
+        <div class="add-modal">
+          <div class="add-modal__head">
+            <h3 class="add-modal__title">新增股票到「{{ activePool?.name }}」</h3>
+            <button class="add-modal__close" @click="closeAddModal">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+          <div class="add-modal__search">
+            <svg class="add-modal__search-icon" width="15" height="15" viewBox="0 0 16 16" fill="none">
+              <circle cx="6.5" cy="6.5" r="4" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M11 11l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <input
+              v-model="addSearchQuery"
+              class="add-modal__input"
+              placeholder="輸入股票代號或名稱搜尋…"
+              autofocus
+            />
+            <span v-if="addSearching" class="add-modal__spin">◌</span>
+          </div>
+          <div class="add-modal__results">
+            <div v-if="!addSearchQuery.trim()" class="add-modal__hint">請輸入關鍵字搜尋股票</div>
+            <div v-else-if="addSearchResults.length === 0 && !addSearching" class="add-modal__hint">無結果</div>
+            <label
+              v-for="stock in addSearchResults"
+              :key="stock.symbol"
+              class="add-result-item"
+              :class="{ selected: addSelectedSymbols.includes(stock.symbol), 'in-pool': stock._inPool }"
+            >
+              <input
+                type="checkbox"
+                class="sr-only"
+                :checked="addSelectedSymbols.includes(stock.symbol)"
+                :disabled="stock._inPool"
+                @change="toggleAddSelect(stock.symbol)"
+              />
+              <span class="add-result-item__check">
+                <svg v-if="addSelectedSymbols.includes(stock.symbol)" width="12" height="12" viewBox="0 0 16 16" fill="none">
+                  <path d="M3.5 8l3 3 6-6" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              <span class="add-result-item__symbol">{{ stock.symbol }}</span>
+              <span class="add-result-item__name">{{ stock.name }}</span>
+              <span v-if="stock._inPool" class="add-result-item__tag">已在池中</span>
+              <span class="add-result-item__industry">{{ stock.industry }}</span>
+            </label>
+          </div>
+          <div class="add-modal__foot">
+            <span class="add-modal__count">已選 {{ addSelectedSymbols.length }} 檔</span>
+            <button class="add-modal__cancel" @click="closeAddModal">取消</button>
+            <button
+              class="add-modal__confirm"
+              :disabled="addSelectedSymbols.length === 0 || addProcessing"
+              @click="confirmAddStocks"
+            >
+              {{ addProcessing ? '加入中…' : `加入 (${addSelectedSymbols.length})` }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+</div>
 </template>
 
 <style scoped>
@@ -1070,4 +1332,289 @@ const today = new Date().toLocaleDateString('zh-TW', {
 .fade-slide-leave-active { transition: opacity 0.2s ease, transform 0.2s ease; }
 .fade-slide-enter-from,
 .fade-slide-leave-to { opacity: 0; transform: translateY(10px); }
+
+/* ── Pool Detail Action Buttons ───────────────────────────────── */
+.pd-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+.pd-action-btn--primary {
+  background: oklch(47% 0.21 264);
+  color: #fff;
+  border-color: oklch(47% 0.21 264);
+}
+.pd-action-btn--primary:hover { background: oklch(52% 0.21 264); }
+.pd-action-btn--danger {
+  background: rgba(239,68,68,0.15);
+  color: #ef4444;
+  border-color: rgba(239,68,68,0.35);
+}
+.pd-action-btn--danger:hover:not(:disabled) { background: rgba(239,68,68,0.25); }
+.pd-action-btn--ghost {
+  background: var(--surface);
+  color: var(--text-2);
+  border-color: var(--border);
+}
+.pd-action-btn--ghost:hover { border-color: var(--text-3); color: var(--text-1); }
+.pd-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Stock Card Wrapper (for remove btn / batch select) ─────── */
+.stock-card-wrap {
+  position: relative;
+}
+.stock-card-wrap .stock-card {
+  width: 100%;
+}
+.stock-card__remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.stock-card-wrap:hover .stock-card__remove {
+  opacity: 1;
+}
+.stock-card__remove:hover {
+  background: rgba(239,68,68,0.15);
+  color: #ef4444;
+  border-color: rgba(239,68,68,0.3);
+}
+.stock-card__remove:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.stock-card__checkbox {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  color: var(--text-2);
+  cursor: pointer;
+  display: flex;
+}
+
+.stock-card-wrap.batch-mode { cursor: pointer; }
+.stock-card-wrap.batch-mode .stock-card { pointer-events: none; }
+.stock-card-wrap.selected .stock-card {
+  border-color: oklch(47% 0.21 264);
+  background: oklch(47% 0.21 264 / 0.08);
+}
+
+/* ── Add Stock Modal ─────────────────────────────────────────── */
+.add-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+.add-modal {
+  background: #1a1e28;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.add-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.add-modal__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #e8eaf0;
+}
+.add-modal__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: transparent;
+  color: #9aa0b4;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.add-modal__close:hover { background: rgba(255,255,255,0.06); color: #e8eaf0; }
+
+.add-modal__search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.add-modal__search-icon { color: #5a607a; flex-shrink: 0; }
+.add-modal__input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #e8eaf0;
+  font-size: 0.9rem;
+}
+.add-modal__input::placeholder { color: #5a607a; }
+.add-modal__spin {
+  color: #5a607a;
+  font-size: 0.85rem;
+  animation: spin 1s linear infinite;
+}
+
+.add-modal__results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.add-modal__hint {
+  padding: 30px 20px;
+  text-align: center;
+  color: #5a607a;
+  font-size: 0.85rem;
+}
+.add-result-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.add-result-item:hover:not(.in-pool) { background: rgba(255,255,255,0.04); }
+.add-result-item.selected { background: oklch(47% 0.21 264 / 0.1); }
+.add-result-item.in-pool { opacity: 0.45; cursor: not-allowed; }
+.add-result-item__check {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(255,255,255,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.12s;
+}
+.add-result-item.selected .add-result-item__check {
+  background: oklch(47% 0.21 264);
+  border-color: oklch(47% 0.21 264);
+}
+.add-result-item__symbol {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #e8eaf0;
+  width: 52px;
+  flex-shrink: 0;
+}
+.add-result-item__name {
+  font-size: 0.82rem;
+  color: #9aa0b4;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.add-result-item__tag {
+  font-size: 0.7rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+  color: #5a607a;
+  flex-shrink: 0;
+}
+.add-result-item__industry {
+  font-size: 0.72rem;
+  color: #5a607a;
+  flex-shrink: 0;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-modal__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+}
+.add-modal__count {
+  font-size: 0.78rem;
+  color: #9aa0b4;
+  flex: 1;
+}
+.add-modal__cancel {
+  padding: 7px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: transparent;
+  color: #9aa0b4;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.add-modal__cancel:hover { border-color: #9aa0b4; color: #e8eaf0; }
+.add-modal__confirm {
+  padding: 7px 18px;
+  border-radius: 8px;
+  border: none;
+  background: oklch(47% 0.21 264);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.add-modal__confirm:hover:not(:disabled) { background: oklch(52% 0.21 264); }
+.add-modal__confirm:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Modal transition */
+.modal-enter-active, .modal-leave-active { transition: opacity 0.2s ease; }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
+.modal-enter-active .add-modal, .modal-leave-active .add-modal { transition: transform 0.2s ease; }
+.modal-enter-from .add-modal { transform: scale(0.96) translateY(10px); }
+.modal-leave-to .add-modal { transform: scale(0.96) translateY(10px); }
+
+/* Screen reader only */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}
 </style>

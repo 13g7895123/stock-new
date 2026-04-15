@@ -80,6 +80,8 @@ func Setup(db *gorm.DB) *gin.Engine {
 			tags.POST("", tagHandler.Create)
 			tags.PUT("/:id", tagHandler.Update)
 			tags.DELETE("/:id", tagHandler.Delete)
+			tags.POST("/:id/members", tagHandler.AddMembers)
+			tags.DELETE("/:id/members", tagHandler.RemoveMembers)
 		}
 
 		// Groups CRUD
@@ -89,6 +91,8 @@ func Setup(db *gorm.DB) *gin.Engine {
 			groupsRoute.POST("", groupHandler.Create)
 			groupsRoute.PUT("/:id", groupHandler.Update)
 			groupsRoute.DELETE("/:id", groupHandler.Delete)
+			groupsRoute.POST("/:id/members", groupHandler.AddMembers)
+			groupsRoute.DELETE("/:id/members", groupHandler.RemoveMembers)
 		}
 
 		// 券商勝率

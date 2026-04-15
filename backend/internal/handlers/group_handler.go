@@ -134,6 +134,62 @@ func (h *GroupHandler) SetStockGroups(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// POST /api/groups/:id/members  body: {"symbols":["1101","2330"]}
+// 批次將股票加入群組（append，不覆寫現有成員）
+func (h *GroupHandler) AddMembers(c *gin.Context) {
+	id := c.Param("id")
+	var g models.StockGroup
+	if err := h.db.First(&g, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		return
+	}
+	var body struct {
+		Symbols []string `json:"symbols"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.Symbols) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "symbols required"})
+		return
+	}
+	var stocks []models.Stock
+	if err := h.db.Where("symbol IN ?", body.Symbols).Find(&stocks).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.db.Model(&g).Association("Stocks").Append(stocks); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "added": len(stocks)})
+}
+
+// DELETE /api/groups/:id/members  body: {"symbols":["1101","2330"]}
+// 批次將股票從群組移除
+func (h *GroupHandler) RemoveMembers(c *gin.Context) {
+	id := c.Param("id")
+	var g models.StockGroup
+	if err := h.db.First(&g, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		return
+	}
+	var body struct {
+		Symbols []string `json:"symbols"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || len(body.Symbols) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "symbols required"})
+		return
+	}
+	var stocks []models.Stock
+	if err := h.db.Where("symbol IN ?", body.Symbols).Find(&stocks).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.db.Model(&g).Association("Stocks").Delete(stocks); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "removed": len(stocks)})
+}
+
 // ListStocksByGroup 供 tag_handler.go 使用的 group_id Joins（內部輔助）
 func GroupIDJoin(db *gorm.DB, groupIDStr string) *gorm.DB {
 	id, err := strconv.Atoi(groupIDStr)
