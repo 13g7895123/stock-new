@@ -135,11 +135,13 @@ async function createPool() {
     
     await $fetch(endpoint, { method: 'POST', body })
     
+    // 刷新資料以便其他頁面（如 watchlist）也能看到新增的群組/標籤
     if (activeTab.value === 'group') {
       await refreshGroups()
     } else {
       await refreshTags()
     }
+    await refreshStocks() // 刷新股票資料以更新關聯
     
     createDialogOpen.value = false
   } catch (err) {
@@ -976,8 +978,8 @@ const today = new Date().toLocaleDateString('zh-TW', {
 }
 
 .dialog {
-  background: var(--s2);
-  border: 1px solid var(--line2);
+  background: oklch(100% 0 0); /* 純白色背景，不受主題影響 */
+  border: 1px solid oklch(88% 0.012 220);
   border-radius: 12px;
   width: 90%;
   max-width: 500px;
@@ -989,20 +991,20 @@ const today = new Date().toLocaleDateString('zh-TW', {
   align-items: center;
   justify-content: space-between;
   padding: 20px 24px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid oklch(88% 0.012 220);
 }
 
 .dialog-title {
   font-size: 16px;
   font-weight: 600;
-  color: var(--t1);
+  color: oklch(10% 0.018 256); /* 深色文字 */
 }
 
 .dialog-close {
   background: none;
   border: none;
   font-size: 20px;
-  color: var(--t3);
+  color: oklch(50% 0.012 240);
   cursor: pointer;
   padding: 0;
   width: 28px;
@@ -1013,7 +1015,7 @@ const today = new Date().toLocaleDateString('zh-TW', {
   border-radius: 6px;
   transition: all 0.15s;
 }
-.dialog-close:hover { background: var(--s3); color: var(--t1); }
+.dialog-close:hover { background: oklch(92% 0.014 220); color: oklch(10% 0.018 256); }
 
 .dialog-body {
   padding: 24px;
@@ -1028,7 +1030,7 @@ const today = new Date().toLocaleDateString('zh-TW', {
   display: block;
   font-size: 13px;
   font-weight: 600;
-  color: var(--t2);
+  color: oklch(35% 0.016 240);
   margin-bottom: 8px;
 }
 
@@ -1036,9 +1038,9 @@ const today = new Date().toLocaleDateString('zh-TW', {
   width: 100%;
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--s1);
-  color: var(--t1);
+  border: 1px solid oklch(88% 0.012 220);
+  background: oklch(97% 0.010 220);
+  color: oklch(10% 0.018 256);
   font-size: 14px;
   font-family: var(--font);
 }
@@ -1052,7 +1054,7 @@ const today = new Date().toLocaleDateString('zh-TW', {
 .color-input {
   width: 60px;
   height: 40px;
-  border: 1px solid var(--line);
+  border: 1px solid oklch(88% 0.012 220);
   border-radius: 6px;
   cursor: pointer;
 }
@@ -1060,7 +1062,7 @@ const today = new Date().toLocaleDateString('zh-TW', {
 .color-value {
   font-family: monospace;
   font-size: 13px;
-  color: var(--t3);
+  color: oklch(50% 0.012 240);
 }
 
 .radio-group {
@@ -1083,8 +1085,8 @@ const today = new Date().toLocaleDateString('zh-TW', {
   max-height: 300px;
   overflow-y: auto;
   padding: 12px;
-  background: var(--s1);
-  border: 1px solid var(--line);
+  background: oklch(97% 0.010 220);
+  border: 1px solid oklch(88% 0.012 220);
   border-radius: 8px;
 }
 
@@ -1097,14 +1099,14 @@ const today = new Date().toLocaleDateString('zh-TW', {
   border-radius: 6px;
   transition: background 0.15s;
 }
-.checkbox-label:hover { background: var(--s3); }
+.checkbox-label:hover { background: oklch(92% 0.014 220); }
 
 .dialog-footer {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
   padding: 20px 24px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid oklch(88% 0.012 220);
 }
 
 .dialog-btn {
@@ -1119,10 +1121,10 @@ const today = new Date().toLocaleDateString('zh-TW', {
 
 .dialog-btn--cancel {
   background: transparent;
-  border-color: var(--line);
-  color: var(--t2);
+  border-color: oklch(88% 0.012 220);
+  color: oklch(35% 0.016 240);
 }
-.dialog-btn--cancel:hover { border-color: var(--line2); }
+.dialog-btn--cancel:hover { border-color: oklch(72% 0.015 240); }
 
 .dialog-btn--primary {
   background: var(--blue);
