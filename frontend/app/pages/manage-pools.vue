@@ -78,7 +78,8 @@ const filteredStocks = computed(() => {
     result = result.filter(s => s.industry === selectedIndustry.value)
   }
   
-  return result
+  // 依股票代碼數字排序
+  return [...result].sort((a, b) => Number(a.symbol) - Number(b.symbol))
 })
 
 const allSelected = computed(() => {
@@ -202,6 +203,30 @@ async function executeBatchUpdate() {
     alert('批次更新失敗：' + (err as Error).message)
   } finally {
     batchProcessing.value = false
+  }
+}
+
+// ─── Remove single pool from stock (inline ✕ button) ──────────
+const removingKey = ref('')  // '{stockId}-{poolId}' 防止重複點擊
+
+async function removePoolFromStock(stock: Stock, poolId: number) {
+  const key = `${stock.id}-${poolId}`
+  if (removingKey.value === key) return
+  removingKey.value = key
+  const isGroup = activeTab.value === 'group'
+  try {
+    const currentIds = isGroup
+      ? (stock.groups?.map(g => g.id) ?? [])
+      : (stock.tags?.map(t => t.id) ?? [])
+    const newIds = currentIds.filter(id => id !== poolId)
+    const endpoint = isGroup
+      ? `/api/stocks/${stock.symbol}/groups`
+      : `/api/stocks/${stock.symbol}/tags`
+    const key2 = isGroup ? 'group_ids' : 'tag_ids'
+    await $fetch(endpoint, { method: 'PUT', body: { [key2]: newIds } })
+    await refreshStocks()
+  } finally {
+    removingKey.value = ''
   }
 }
 
@@ -450,17 +475,31 @@ const today = new Date().toLocaleDateString('zh-TW', {
                       <span 
                         v-for="g in stock.groups" 
                         :key="g.id" 
-                        class="pool-tag"
+                        class="pool-tag pool-tag--removable"
                         :style="{ background: g.color }"
-                      >{{ g.name }}</span>
+                      >
+                        {{ g.name }}
+                        <button 
+                          class="pool-tag-remove"
+                          :disabled="removingKey === `${stock.id}-${g.id}`"
+                          @click.stop="removePoolFromStock(stock, g.id)"
+                        >✕</button>
+                      </span>
                     </template>
                     <template v-else>
                       <span 
                         v-for="t in stock.tags" 
                         :key="t.id" 
-                        class="pool-tag"
+                        class="pool-tag pool-tag--removable"
                         :style="{ background: t.color }"
-                      >{{ t.name }}</span>
+                      >
+                        {{ t.name }}
+                        <button 
+                          class="pool-tag-remove"
+                          :disabled="removingKey === `${stock.id}-${t.id}`"
+                          @click.stop="removePoolFromStock(stock, t.id)"
+                        >✕</button>
+                      </span>
                     </template>
                   </div>
                 </td>
@@ -719,8 +758,9 @@ const today = new Date().toLocaleDateString('zh-TW', {
   font-weight: 600;
   border: 1px solid;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: opacity 0.15s, transform 0.12s, border-color 0.15s, color 0.15s;
 }
+.action-btn:active { transform: scale(0.97); }
 
 .action-btn--primary {
   background: var(--blue);
@@ -775,8 +815,9 @@ const today = new Date().toLocaleDateString('zh-TW', {
   border: none;
   color: var(--t3);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.2s, color 0.2s;
 }
+.tab-btn:not(.active):hover { color: var(--t1); }
 .tab-btn.active { background: var(--blue); color: white; }
 
 /* ── Sections ────────────────────────────────────────────────── */
@@ -823,6 +864,11 @@ const today = new Date().toLocaleDateString('zh-TW', {
   border-left-width: 4px;
   border-radius: 8px;
   padding: 14px;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.pool-card:hover {
+  box-shadow: 0 4px 16px oklch(0% 0 0 / 0.15);
+  transform: translateY(-1px);
 }
 
 .pool-card-header {
@@ -935,6 +981,9 @@ const today = new Date().toLocaleDateString('zh-TW', {
   border-bottom: 1px solid var(--line);
 }
 
+.stocks-table tbody tr {
+  transition: background 0.15s;
+}
 .stocks-table tbody tr:hover {
   background: var(--s1);
 }
@@ -957,13 +1006,41 @@ const today = new Date().toLocaleDateString('zh-TW', {
 }
 
 .pool-tag {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 2px 8px;
   border-radius: 100px;
   font-size: 11px;
   font-weight: 600;
   color: white;
+  transition: padding 0.15s, opacity 0.15s;
 }
+
+.pool-tag--removable:hover {
+  padding-right: 4px;
+}
+
+.pool-tag-remove {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: oklch(0% 0 0 / 0.25);
+  border: none;
+  color: white;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.pool-tag-remove:hover { background: oklch(0% 0 0 / 0.5); }
+.pool-tag-remove:disabled { opacity: 0.5; cursor: wait; }
+.pool-tag--removable:hover .pool-tag-remove { display: flex; }
 
 /* ── Dialog ──────────────────────────────────────────────────── */
 .dialog-overlay {
