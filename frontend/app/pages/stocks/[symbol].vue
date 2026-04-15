@@ -143,6 +143,48 @@ function calcMA(data: DailyPrice[], period: number): (number | null)[] {
   return result
 }
 
+// ── 計算包含即時資料的擴展資料陣列（用於均線計算）──────────────────
+function getExtendedData(): DailyPrice[] {
+  const data = prices.value ?? []
+  if (!realtime.value?.is_trading || realtime.value.price <= 0 || realtime.value.open <= 0) {
+    return data
+  }
+  
+  // 建立即時資料點（模擬成 DailyPrice 格式）
+  const rt = realtime.value
+  const rtData: DailyPrice = {
+    id: -1,  // 特殊 ID 表示即時資料
+    symbol: symbol,
+    date: new Date().toISOString(),
+    open: rt.open,
+    high: rt.high,
+    low: rt.low,
+    close: rt.price,  // 即時價格作為收盤價
+    volume: rt.volume * 1000,  // 張數轉股數
+    tx_value: 0,
+    tx_count: 0,
+  }
+  
+  return [...data, rtData]
+}
+
+// ── 計算 hover K 棒的均線數值 ──────────────────────────────────────
+const hoveredMaValues = computed<Record<number, number | null>>(() => {
+  if (hoveredIdx.value === null) return {}
+  
+  const data = prices.value ?? []
+  if (hoveredIdx.value >= data.length) return {}
+  
+  const result: Record<number, number | null> = {}
+  for (const ma of maLines.value) {
+    if (!ma.enabled) continue
+    const maValues = calcMA(data, ma.period)
+    result[ma.period] = maValues[hoveredIdx.value] ?? null
+  }
+  
+  return result
+})
+
 // ── Zoom / Pan ─────────────────────────────────────────────
 const viewStart = ref(0)
 const viewEnd   = ref(0)
@@ -401,15 +443,22 @@ function drawChart() {
     ctx.fillText(priceText, W - 4, rtPriceY + 1)
   }
 
-  // ── MA Lines (use full data for warmup, draw only visible range)
+  // ── MA Lines (use full data for warmup, draw only visible range, extend to realtime)
   ctx.setLineDash([])
+  
+  // 計算包含即時資料的擴展資料（如果有的話）
+  const extendedData = getExtendedData()
+  const hasRealtimeInMA = extendedData.length > data.length
+  
   for (const ma of maLines.value) {
     if (!ma.enabled) continue
-    const maValues = calcMA(data, ma.period)
+    const maValues = calcMA(extendedData, ma.period)
     ctx.beginPath()
     ctx.strokeStyle = ma.color
     ctx.lineWidth   = 1.5
     let started = false
+    
+    // 繪製歷史資料的均線
     for (let i = 0; i < n; i++) {
       const mv = maValues[vs + i]
       if (mv == null) { started = false; continue }
@@ -418,7 +467,29 @@ function drawChart() {
       if (!started) { ctx.moveTo(x, y); started = true }
       else ctx.lineTo(x, y)
     }
-    ctx.stroke()
+    
+    // 如果有即時資料，延伸均線到即時 K 棒
+    if (hasRealtimeInMA && hasRealtime) {
+      const rtMaValue = maValues[extendedData.length - 1]
+      if (rtMaValue != null) {
+        const rtX = xOf(n - 1) + barW * 1.2  // 與即時 K 棒的 X 位置一致
+        const rtY = yPrice(rtMaValue)
+        
+        // 使用虛線連接到即時點
+        ctx.setLineDash([3, 3])
+        ctx.lineTo(rtX, rtY)
+        ctx.stroke()
+        ctx.setLineDash([])
+        
+        // 在即時點繪製一個小圓點
+        ctx.beginPath()
+        ctx.arc(rtX, rtY, 2.5, 0, Math.PI * 2)
+        ctx.fillStyle = ma.color
+        ctx.fill()
+      }
+    } else {
+      ctx.stroke()
+    }
   }
 
   // ── Horizontal Lines
@@ -1198,6 +1269,18 @@ function startRefresh() {
               </b>
             </span>
             <span class="tt-row"><em>量</em>{{ Math.round(prices[hoveredIdx]!.volume / 1000).toLocaleString() }}張</span>
+            
+            <!-- 均線數值 -->
+            <div v-if="Object.keys(hoveredMaValues).length > 0" class="tt-divider" />
+            <span
+              v-for="ma in maLines.filter(m => m.enabled)"
+              :key="ma.period"
+              class="tt-ma"
+              :style="{ color: ma.color }"
+            >
+              <em>MA{{ ma.period }}</em>
+              {{ hoveredMaValues[ma.period]?.toFixed(2) ?? '—' }}
+            </span>
           </div>
         </div>
       </div>
@@ -2027,6 +2110,29 @@ function startRefresh() {
   color: var(--t3);
   font-size: 10.5px;
   width: 14px;
+}
+
+.tt-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 0;
+}
+
+.tt-ma {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  align-items: center;
+}
+
+.tt-ma em {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  min-width: 32px;
+  opacity: 0.9;
 }
 
 .chart-empty {
