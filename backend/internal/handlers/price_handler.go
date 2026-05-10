@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"stock-backend/internal/models"
@@ -37,11 +38,19 @@ type PreviousTradingDayPrice struct {
 	Volume int64   `json:"volume"`
 }
 
-// PreviousTradingDaysResponse 最近兩個交易日價量資訊回傳結構
-type PreviousTradingDaysResponse struct {
+// MarketPreviousTradingDaysStock 用於回傳單檔股票最近兩個交易日價量
+type MarketPreviousTradingDaysStock struct {
 	Symbol string                    `json:"symbol"`
-	Count  int                       `json:"count"`
+	Name   string                    `json:"name"`
+	Market string                    `json:"market"`
 	Data   []PreviousTradingDayPrice `json:"data"`
+}
+
+// MarketPreviousTradingDaysResponse 全市場最近兩個交易日價量回傳結構
+type MarketPreviousTradingDaysResponse struct {
+	AsOf  string                           `json:"as_of"`
+	Count int                              `json:"count"`
+	Data  []MarketPreviousTradingDaysStock `json:"data"`
 }
 
 // Aggregated  GET /api/stocks/:symbol/prices/aggregated?period=weekly|monthly&from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -152,11 +161,9 @@ func aggregatePrices(prices []models.DailyPrice, truncUnit string) []AggregatedB
 	return bars
 }
 
-// PreviousTradingDays  GET /api/stocks/:symbol/prices/previous-trading-days?as_of=YYYY-MM-DD
-// 回傳截至 as_of（預設今天）往前推最近兩個有日K資料的交易日收盤價與成交量。
-func (h *PriceHandler) PreviousTradingDays(c *gin.Context) {
-	symbol := c.Param("symbol")
-
+// MarketPreviousTradingDays  GET /api/prices/previous-trading-days?as_of=YYYY-MM-DD&market=TWSE|TPEX
+// 回傳截至 as_of（預設今天）全市場每檔股票最近兩個有日K資料的交易日收盤價與成交量。
+func (h *PriceHandler) MarketPreviousTradingDays(c *gin.Context) {
 	loc, err := time.LoadLocation("Asia/Taipei")
 	if err != nil {
 		loc = time.Local
@@ -171,33 +178,89 @@ func (h *PriceHandler) PreviousTradingDays(c *gin.Context) {
 		asOf = parsed
 	}
 	asOfDate := asOf.Format("2006-01-02")
+	market := strings.ToUpper(strings.TrimSpace(c.Query("market")))
+	if market != "" && market != "TWSE" && market != "TPEX" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "market must be TWSE or TPEX"})
+		return
+	}
 
-	var prices []models.DailyPrice
-	if err := h.db.Where("symbol = ? AND date <= ?", symbol, asOfDate).
-		Order("date DESC").
-		Limit(2).
-		Find(&prices).Error; err != nil {
+	type row struct {
+		Symbol string    `gorm:"column:symbol"`
+		Name   string    `gorm:"column:name"`
+		Market string    `gorm:"column:market"`
+		Date   time.Time `gorm:"column:date"`
+		Close  float64   `gorm:"column:close"`
+		Volume int64     `gorm:"column:volume"`
+	}
+
+	query := `
+SELECT
+    s.symbol,
+    s.name,
+    s.market,
+	dp.date,
+	dp.close,
+	dp.volume
+FROM stocks s
+JOIN LATERAL (
+	SELECT date, close, volume
+	FROM daily_prices dp
+	WHERE dp.symbol = s.symbol
+	  AND dp.date <= ?
+	ORDER BY dp.date DESC
+	LIMIT 2
+) dp ON TRUE
+WHERE s.deleted_at IS NULL
+`
+	args := []any{asOfDate}
+	if market != "" {
+		query += "  AND s.market = ?\n"
+		args = append(args, market)
+	} else {
+		query += "  AND s.market IN ('TWSE', 'TPEX')\n"
+	}
+	query += "ORDER BY s.market, s.symbol, dp.date DESC"
+
+	var rows []row
+	if err := h.db.Raw(query, args...).Scan(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if len(prices) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no price data"})
+	if len(rows) == 0 {
+		c.JSON(http.StatusOK, MarketPreviousTradingDaysResponse{
+			AsOf:  asOfDate,
+			Count: 0,
+			Data:  []MarketPreviousTradingDaysStock{},
+		})
 		return
 	}
 
-	data := make([]PreviousTradingDayPrice, 0, len(prices))
-	for _, p := range prices {
-		data = append(data, PreviousTradingDayPrice{
-			Date:   p.Date.Format("2006-01-02"),
-			Close:  p.Close,
-			Volume: p.Volume,
+	stocks := make([]MarketPreviousTradingDaysStock, 0)
+	stockIndex := make(map[string]int)
+	for _, r := range rows {
+		index, ok := stockIndex[r.Symbol]
+		if !ok {
+			index = len(stocks)
+			stockIndex[r.Symbol] = index
+			stocks = append(stocks, MarketPreviousTradingDaysStock{
+				Symbol: r.Symbol,
+				Name:   r.Name,
+				Market: r.Market,
+				Data:   []PreviousTradingDayPrice{},
+			})
+		}
+
+		stocks[index].Data = append(stocks[index].Data, PreviousTradingDayPrice{
+			Date:   r.Date.Format("2006-01-02"),
+			Close:  r.Close,
+			Volume: r.Volume,
 		})
 	}
 
-	c.JSON(http.StatusOK, PreviousTradingDaysResponse{
-		Symbol: symbol,
-		Count:  len(data),
-		Data:   data,
+	c.JSON(http.StatusOK, MarketPreviousTradingDaysResponse{
+		AsOf:  asOfDate,
+		Count: len(stocks),
+		Data:  stocks,
 	})
 }
 

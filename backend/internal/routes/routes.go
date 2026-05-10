@@ -56,7 +56,6 @@ func Setup(db *gorm.DB) *gin.Engine {
 			// 日K 價量
 			stocks.GET("/:symbol/prices", priceHandler.List)
 			stocks.GET("/:symbol/prices/latest", priceHandler.Latest)
-			stocks.GET("/:symbol/prices/previous-trading-days", priceHandler.PreviousTradingDays)
 			// 週K / 月K 聚合
 			stocks.GET("/:symbol/prices/aggregated", priceHandler.Aggregated)
 			// 籌碼評分
@@ -70,6 +69,9 @@ func Setup(db *gorm.DB) *gin.Engine {
 			stocks.GET("/:symbol/broker-winrate", winrateHandler.GetWinrateBySymbol)
 			stocks.GET("/:symbol/broker-winrate/events", winrateHandler.GetEventsByBroker)
 		}
+
+		// 全市場日K價量
+		api.GET("/prices/previous-trading-days", priceHandler.MarketPreviousTradingDays)
 
 		// 產業列表
 		api.GET("/industries", tagHandler.ListIndustries)
