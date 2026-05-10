@@ -219,7 +219,7 @@ WHERE s.deleted_at IS NULL
 	} else {
 		query += "  AND s.market IN ('TWSE', 'TPEX')\n"
 	}
-	query += "ORDER BY s.market, s.symbol, dp.date DESC"
+	query += "ORDER BY s.symbol, dp.date DESC"
 
 	var rows []row
 	if err := h.db.Raw(query, args...).Scan(&rows).Error; err != nil {
