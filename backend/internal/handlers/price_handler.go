@@ -30,6 +30,20 @@ type AggregatedBar struct {
 	TxValue     int64   `json:"tx_value"`
 }
 
+// PreviousTradingDayPrice 用於回傳最近兩個交易日的收盤價與成交量
+type PreviousTradingDayPrice struct {
+	Date   string  `json:"date"`
+	Close  float64 `json:"close"`
+	Volume int64   `json:"volume"`
+}
+
+// PreviousTradingDaysResponse 最近兩個交易日價量資訊回傳結構
+type PreviousTradingDaysResponse struct {
+	Symbol string                    `json:"symbol"`
+	Count  int                       `json:"count"`
+	Data   []PreviousTradingDayPrice `json:"data"`
+}
+
 // Aggregated  GET /api/stocks/:symbol/prices/aggregated?period=weekly|monthly&from=YYYY-MM-DD&to=YYYY-MM-DD
 // 回傳週K（period=weekly）或月K（period=monthly）聚合資料
 func (h *PriceHandler) Aggregated(c *gin.Context) {
@@ -136,6 +150,55 @@ func aggregatePrices(prices []models.DailyPrice, truncUnit string) []AggregatedB
 		})
 	}
 	return bars
+}
+
+// PreviousTradingDays  GET /api/stocks/:symbol/prices/previous-trading-days?as_of=YYYY-MM-DD
+// 回傳截至 as_of（預設今天）往前推最近兩個有日K資料的交易日收盤價與成交量。
+func (h *PriceHandler) PreviousTradingDays(c *gin.Context) {
+	symbol := c.Param("symbol")
+
+	loc, err := time.LoadLocation("Asia/Taipei")
+	if err != nil {
+		loc = time.Local
+	}
+	asOf := time.Now().In(loc)
+	if raw := c.Query("as_of"); raw != "" {
+		parsed, err := time.ParseInLocation("2006-01-02", raw, loc)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "as_of must be YYYY-MM-DD"})
+			return
+		}
+		asOf = parsed
+	}
+	asOfDate := asOf.Format("2006-01-02")
+
+	var prices []models.DailyPrice
+	if err := h.db.Where("symbol = ? AND date <= ?", symbol, asOfDate).
+		Order("date DESC").
+		Limit(2).
+		Find(&prices).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if len(prices) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no price data"})
+		return
+	}
+
+	data := make([]PreviousTradingDayPrice, 0, len(prices))
+	for _, p := range prices {
+		data = append(data, PreviousTradingDayPrice{
+			Date:   p.Date.Format("2006-01-02"),
+			Close:  p.Close,
+			Volume: p.Volume,
+		})
+	}
+
+	c.JSON(http.StatusOK, PreviousTradingDaysResponse{
+		Symbol: symbol,
+		Count:  len(data),
+		Data:   data,
+	})
 }
 
 // List  GET /api/stocks/:symbol/prices?from=2024-01-01&to=2024-12-31&limit=500
