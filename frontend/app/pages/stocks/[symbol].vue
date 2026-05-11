@@ -54,8 +54,37 @@ interface DailyPrice {
   tx_count: number
 }
 
+type StatusType = 'disposition' | 'attention' | 'day_trade_restricted'
+
+interface StockStatus {
+  id: number
+  symbol: string
+  name: string
+  market: string
+  type: StatusType
+  source_date: string
+  start_date: string
+  end_date: string
+  reason: string
+  measure: string
+  detail: string
+  raw_period: string
+  source_url: string
+  fetched_at: string
+}
+
+interface StockStatusesResponse {
+  as_of: string
+  count: number
+  data: StockStatus[]
+}
+
 // ── 資料抓取 ──────────────────────────────
 const { data: stock } = await useFetch<Stock>(`/api/stocks/${symbol}`)
+const { data: stockStatusResponse } = await useFetch<StockStatusesResponse>(
+  `/api/stock-statuses?symbol=${symbol}`,
+  { default: () => ({ as_of: '', count: 0, data: [] }) }
+)
 
 const today = new Date()
 const from = ref(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate()).toISOString().split('T')[0])
@@ -882,6 +911,24 @@ const avgVolume = computed(() => {
   return Math.round(avg).toLocaleString()
 })
 
+const activeStatuses = computed(() => stockStatusResponse.value?.data ?? [])
+
+function statusLabel(type: StatusType): string {
+  if (type === 'disposition') return '處置股'
+  if (type === 'attention') return '注意股'
+  return '限當沖股'
+}
+
+function statusClass(type: StatusType): string {
+  if (type === 'disposition') return 'status-chip--disposition'
+  if (type === 'attention') return 'status-chip--attention'
+  return 'status-chip--daytrade'
+}
+
+function formatStatusDate(value: string): string {
+  return value?.split?.('T')?.[0] ?? '—'
+}
+
 // ── 券商勝率 ─────────────────────────────────────────────────────
 interface BrokerWinrate {
   broker_name: string
@@ -1258,6 +1305,14 @@ function startRefresh() {
         <div class="hero-left">
           <p class="hero-eyebrow">{{ symbol }}</p>
           <h1 class="hero-name">{{ stock?.name ?? symbol }}</h1>
+          <div v-if="activeStatuses.length" class="hero-statuses">
+            <span
+              v-for="status in activeStatuses"
+              :key="`${status.type}-${status.start_date}`"
+              class="status-chip"
+              :class="statusClass(status.type)"
+            >{{ statusLabel(status.type) }}</span>
+          </div>
         </div>
         <div class="hero-right">
           <div v-if="latest" class="hero-price">
@@ -1327,6 +1382,25 @@ function startRefresh() {
             <path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
           </svg>
         </button>
+      </div>
+
+      <!-- ══ Regulatory Status ══ -->
+      <div v-if="activeStatuses.length" class="status-panel">
+        <div class="status-panel__topbar">
+          <h2 class="table-heading">監管狀態</h2>
+          <NuxtLink to="/stock-statuses" class="status-panel-link">查看總覽</NuxtLink>
+        </div>
+        <div class="status-list">
+          <div v-for="status in activeStatuses" :key="`${status.id}-${status.type}`" class="status-row">
+            <div class="status-row__head">
+              <span class="status-chip" :class="statusClass(status.type)">{{ statusLabel(status.type) }}</span>
+              <span class="status-period">{{ formatStatusDate(status.start_date) }} 至 {{ formatStatusDate(status.end_date) }}</span>
+            </div>
+            <p v-if="status.reason || status.measure || status.detail" class="status-reason">
+              {{ status.reason || status.measure || status.detail }}
+            </p>
+          </div>
+        </div>
       </div>
 
       <!-- ══ Stat Bar ══ -->
@@ -2037,6 +2111,13 @@ function startRefresh() {
   line-height: 1.1;
 }
 
+.hero-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
 .hero-price {
   display: flex;
   align-items: baseline;
@@ -2070,6 +2151,34 @@ function startRefresh() {
 
 .col-up { color: var(--up); }
 .col-dn { color: var(--dn); }
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line2);
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+.status-chip--disposition {
+  color: var(--up);
+  border-color: color-mix(in oklch, var(--up) 62%, var(--line));
+  background: color-mix(in oklch, var(--up) 10%, transparent);
+}
+.status-chip--attention {
+  color: var(--gold);
+  border-color: color-mix(in oklch, var(--gold) 62%, var(--line));
+  background: color-mix(in oklch, var(--gold) 10%, transparent);
+}
+.status-chip--daytrade {
+  color: var(--blue);
+  border-color: color-mix(in oklch, var(--blue) 62%, var(--line));
+  background: color-mix(in oklch, var(--blue) 10%, transparent);
+}
 
 /* ── Hero Right（價格 + 刷新）─────────── */
 .hero-right {
@@ -2137,6 +2246,59 @@ function startRefresh() {
   height: 100%;
   background: var(--blue);
   transition: width 0.3s ease;
+}
+
+/* ── Regulatory Status ─────────────────── */
+.status-panel {
+  border-bottom: 1px solid var(--line);
+  padding: 16px 0;
+}
+.status-panel__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.status-panel-link {
+  color: var(--t3);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+.status-panel-link:hover { color: var(--gold); border-color: var(--gold); }
+.status-list {
+  display: grid;
+  gap: 8px;
+}
+.status-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.status-row__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.status-period {
+  color: var(--t3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.status-reason {
+  color: var(--t2);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 /* ── Stat Bar ──────────────────────────── */
@@ -2542,6 +2704,8 @@ function startRefresh() {
   .hero { align-items: flex-start; flex-direction: column; }
   .hero-price { gap: 10px; }
   .price-num { font-size: 36px; }
+
+  .status-row { grid-template-columns: 1fr; gap: 6px; }
 
   .stat-item { min-width: 76px; padding-left: 0; }
 

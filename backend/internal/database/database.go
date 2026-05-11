@@ -26,6 +26,8 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 		&models.Stock{},
 		&models.Tag{},
 		&models.StockGroup{},
+		&models.StockStatus{},
+		&models.StockStatusSyncJob{},
 		&models.DailyPrice{},
 		&models.ChipsSyncJob{},
 		&models.ChipsHolderSnapshot{},

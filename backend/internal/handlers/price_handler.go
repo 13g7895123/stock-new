@@ -38,12 +38,28 @@ type PreviousTradingDayPrice struct {
 	Volume int64   `json:"volume"`
 }
 
+// StockStatusFlag 用於回傳股票目前有效的處置 / 注意 / 限當沖標記。
+type StockStatusFlag struct {
+	Type       string `json:"type"`
+	Label      string `json:"label"`
+	SourceDate string `json:"source_date"`
+	StartDate  string `json:"start_date"`
+	EndDate    string `json:"end_date"`
+	Reason     string `json:"reason,omitempty"`
+	Measure    string `json:"measure,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+}
+
 // MarketPreviousTradingDaysStock 用於回傳單檔股票最近兩個交易日價量
 type MarketPreviousTradingDaysStock struct {
-	Symbol string                    `json:"symbol"`
-	Name   string                    `json:"name"`
-	Market string                    `json:"market"`
-	Data   []PreviousTradingDayPrice `json:"data"`
+	Symbol               string                    `json:"symbol"`
+	Name                 string                    `json:"name"`
+	Market               string                    `json:"market"`
+	IsDisposition        bool                      `json:"is_disposition"`
+	IsAttention          bool                      `json:"is_attention"`
+	IsDayTradeRestricted bool                      `json:"is_day_trade_restricted"`
+	Statuses             []StockStatusFlag         `json:"statuses"`
+	Data                 []PreviousTradingDayPrice `json:"data"`
 }
 
 // MarketPreviousTradingDaysResponse 全市場最近兩個交易日價量回傳結構
@@ -226,6 +242,11 @@ WHERE s.deleted_at IS NULL
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	statusMap, err := h.loadActiveStatusFlags(asOfDate, market)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	if len(rows) == 0 {
 		c.JSON(http.StatusOK, MarketPreviousTradingDaysResponse{
 			AsOf:  asOfDate,
@@ -242,11 +263,19 @@ WHERE s.deleted_at IS NULL
 		if !ok {
 			index = len(stocks)
 			stockIndex[r.Symbol] = index
+			statuses := statusMap[r.Symbol]
+			if statuses == nil {
+				statuses = []StockStatusFlag{}
+			}
 			stocks = append(stocks, MarketPreviousTradingDaysStock{
-				Symbol: r.Symbol,
-				Name:   r.Name,
-				Market: r.Market,
-				Data:   []PreviousTradingDayPrice{},
+				Symbol:               r.Symbol,
+				Name:                 r.Name,
+				Market:               r.Market,
+				IsDisposition:        hasStatusType(statuses, models.StockStatusDisposition),
+				IsAttention:          hasStatusType(statuses, models.StockStatusAttention),
+				IsDayTradeRestricted: hasStatusType(statuses, models.StockStatusDayTradeRestricted),
+				Statuses:             statuses,
+				Data:                 []PreviousTradingDayPrice{},
 			})
 		}
 
@@ -262,6 +291,59 @@ WHERE s.deleted_at IS NULL
 		Count: len(stocks),
 		Data:  stocks,
 	})
+}
+
+func (h *PriceHandler) loadActiveStatusFlags(asOfDate, market string) (map[string][]StockStatusFlag, error) {
+	q := h.db.Model(&models.StockStatus{}).
+		Where("start_date <= ? AND end_date >= ?", asOfDate, asOfDate).
+		Order("symbol ASC, type ASC, start_date ASC")
+	if market != "" {
+		q = q.Where("market = ?", market)
+	} else {
+		q = q.Where("market IN ?", []string{"TWSE", "TPEX"})
+	}
+
+	var statuses []models.StockStatus
+	if err := q.Find(&statuses).Error; err != nil {
+		return nil, err
+	}
+
+	out := make(map[string][]StockStatusFlag, len(statuses))
+	for _, status := range statuses {
+		out[status.Symbol] = append(out[status.Symbol], StockStatusFlag{
+			Type:       status.Type,
+			Label:      statusLabel(status.Type),
+			SourceDate: status.SourceDate.Format("2006-01-02"),
+			StartDate:  status.StartDate.Format("2006-01-02"),
+			EndDate:    status.EndDate.Format("2006-01-02"),
+			Reason:     status.Reason,
+			Measure:    status.Measure,
+			Detail:     status.Detail,
+		})
+	}
+	return out, nil
+}
+
+func hasStatusType(statuses []StockStatusFlag, statusType string) bool {
+	for _, status := range statuses {
+		if status.Type == statusType {
+			return true
+		}
+	}
+	return false
+}
+
+func statusLabel(statusType string) string {
+	switch statusType {
+	case models.StockStatusDisposition:
+		return "處置股"
+	case models.StockStatusAttention:
+		return "注意股"
+	case models.StockStatusDayTradeRestricted:
+		return "限當沖股"
+	default:
+		return statusType
+	}
 }
 
 // List  GET /api/stocks/:symbol/prices?from=2024-01-01&to=2024-12-31&limit=500

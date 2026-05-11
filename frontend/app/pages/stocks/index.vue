@@ -114,6 +114,7 @@
           <span class="stock-count">{{ filteredStocks.length.toLocaleString() }} / {{ stocks.length.toLocaleString() }}</span>
         </div>
         <div class="toolbar__right">
+          <NuxtLink to="/stock-statuses" class="status-page-link">狀態總覽</NuxtLink>
           <input
             v-model="searchQuery"
             class="search-input"
@@ -154,6 +155,27 @@
                 @click="selectedIndustry = industry"
               >
                 {{ resolveIndustry(industry) }}
+              </button>
+            </li>
+          </ul>
+        </section>
+
+        <!-- Stock Status Filter -->
+        <section class="filter-section">
+          <div class="filter-heading">
+            <span>監管狀態</span>
+            <button v-if="selectedStatusType" class="clear-btn" @click="selectedStatusType = ''">清除</button>
+          </div>
+          <div v-if="statusLoading" class="filter-loading">載入中…</div>
+          <ul v-else class="filter-list status-filter-list">
+            <li v-for="item in statusFilters" :key="item.type || 'all'">
+              <button
+                class="filter-item status-filter-item"
+                :class="{ active: selectedStatusType === item.type }"
+                @click="selectedStatusType = item.type"
+              >
+                <span class="status-dot" :class="item.dotClass"></span>
+                {{ item.label }}
               </button>
             </li>
           </ul>
@@ -272,6 +294,7 @@
             <tr>
               <th>代號</th>
               <th>名稱</th>
+              <th>狀態</th>
               <th>族群</th>
               <th class="ra">股價</th>
               <th class="ra">漲跌</th>
@@ -288,6 +311,18 @@
                 <NuxtLink :to="`/stocks/${stock.symbol}`">{{ stock.symbol }}</NuxtLink>
               </td>
               <td class="td-name">{{ stock.name }}</td>
+              <td class="td-status">
+                <div v-if="stockStatuses(stock).length" class="status-cell">
+                  <span
+                    v-for="status in stockStatuses(stock)"
+                    :key="`${stock.symbol}-${status.type}-${status.start_date}`"
+                    class="status-chip"
+                    :class="statusClass(status.type)"
+                    :title="statusTitle(status)"
+                  >{{ statusLabel(status.type) }}</span>
+                </div>
+                <span v-else class="t3">—</span>
+              </td>
               <td class="td-industry">
                 <span v-if="stock.industry" class="industry-pill">{{ resolveIndustry(stock.industry) }}</span>
                 <span v-else class="t3">—</span>
@@ -427,6 +462,31 @@ interface Stock {
   groups: StockGroup[]
 }
 
+type StatusType = '' | 'disposition' | 'attention' | 'day_trade_restricted'
+
+interface StockStatus {
+  id: number
+  symbol: string
+  name: string
+  market: string
+  type: Exclude<StatusType, ''>
+  source_date: string
+  start_date: string
+  end_date: string
+  reason: string
+  measure: string
+  detail: string
+  raw_period: string
+  source_url: string
+  fetched_at: string
+}
+
+interface StockStatusesResponse {
+  as_of: string
+  count: number
+  data: StockStatus[]
+}
+
 // ── Theme + Style ───────────────────────────────────────────────
 const { isDark, appStyle, isBento, isClassic, toggleTheme, setTheme, setStyle } = useAppPrefs()
 const settingsOpen = ref(false)
@@ -441,6 +501,14 @@ const searchQuery      = ref('')
 const selectedIndustry = ref('')
 const selectedTagId    = ref(0)
 const selectedGroupId  = ref(0)
+const selectedStatusType = ref<StatusType>('')
+
+const statusFilters: { type: StatusType; label: string; dotClass: string }[] = [
+  { type: '', label: '全部狀態', dotClass: 'status-dot--all' },
+  { type: 'disposition', label: '處置股', dotClass: 'status-dot--disposition' },
+  { type: 'attention', label: '注意股', dotClass: 'status-dot--attention' },
+  { type: 'day_trade_restricted', label: '限當沖股', dotClass: 'status-dot--daytrade' },
+]
 
 // ── Industry Code → 中文對照 ───────────────────────────
 const industryMap: Record<string, string> = {
@@ -570,6 +638,8 @@ async function deleteGroup(id: number) {
 // ── Stocks ─────────────────────────────────────────────────────
 const stocks       = ref<Stock[]>([])
 const tableLoading = ref(true)
+const activeStatuses = ref<StockStatus[]>([])
+const statusLoading = ref(true)
 
 async function fetchStocks() {
   tableLoading.value = true
@@ -587,14 +657,43 @@ async function fetchStocks() {
   }
 }
 
+async function fetchStockStatuses() {
+  statusLoading.value = true
+  try {
+    const res = await $fetch<StockStatusesResponse>('/api/stock-statuses')
+    activeStatuses.value = Array.isArray(res?.data) ? res.data : []
+  } catch {
+    activeStatuses.value = []
+  } finally {
+    statusLoading.value = false
+  }
+}
+
+const stockStatusMap = computed(() => {
+  const map = new Map<string, StockStatus[]>()
+  for (const status of activeStatuses.value) {
+    const rows = map.get(status.symbol) ?? []
+    rows.push(status)
+    map.set(status.symbol, rows)
+  }
+  return map
+})
+
+function stockStatuses(stock: Stock): StockStatus[] {
+  return stockStatusMap.value.get(stock.symbol) ?? []
+}
+
 const filteredStocks = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return stocks.value
-  return stocks.value.filter(s =>
-    s.symbol.toLowerCase().includes(q) ||
-    s.name.toLowerCase().includes(q) ||
-    (s.industry ?? '').toLowerCase().includes(q)
-  )
+  return stocks.value.filter(s => {
+    const rows = stockStatuses(s)
+    const matchStatus = !selectedStatusType.value || rows.some(status => status.type === selectedStatusType.value)
+    if (!matchStatus) return false
+    if (!q) return true
+    return s.symbol.toLowerCase().includes(q) ||
+      s.name.toLowerCase().includes(q) ||
+      (s.industry ?? '').toLowerCase().includes(q)
+  })
 })
 
 // Re-fetch when server-side filters change
@@ -692,9 +791,33 @@ function colorClass(val: number) {
   return 'col-flat'
 }
 
+function statusLabel(type: StatusType): string {
+  if (type === 'disposition') return '處置'
+  if (type === 'attention') return '注意'
+  if (type === 'day_trade_restricted') return '限當沖'
+  return '狀態'
+}
+
+function statusClass(type: StatusType): string {
+  if (type === 'disposition') return 'status-chip--disposition'
+  if (type === 'attention') return 'status-chip--attention'
+  if (type === 'day_trade_restricted') return 'status-chip--daytrade'
+  return ''
+}
+
+function formatStatusDate(value: string): string {
+  return value?.split?.('T')?.[0] ?? '—'
+}
+
+function statusTitle(status: StockStatus): string {
+  const period = `${formatStatusDate(status.start_date)} 至 ${formatStatusDate(status.end_date)}`
+  const reason = status.reason || status.measure || status.detail || ''
+  return `${statusLabel(status.type)}｜${period}${reason ? `｜${reason}` : ''}`
+}
+
 // ── Init ───────────────────────────────────────────────────────
 onMounted(async () => {
-  await Promise.all([fetchIndustries(), fetchTags(), fetchGroups(), fetchStocks()])
+  await Promise.all([fetchIndustries(), fetchTags(), fetchGroups(), fetchStocks(), fetchStockStatuses()])
 })
 </script>
 
@@ -880,6 +1003,7 @@ onMounted(async () => {
   gap: 16px;
 }
 .toolbar__left { display: flex; align-items: baseline; gap: 12px; }
+.toolbar__right { display: flex; align-items: center; gap: 10px; }
 .page-title {
   font-size: 19px;
   font-weight: 600;
@@ -907,6 +1031,28 @@ onMounted(async () => {
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--blue) 16%, transparent);
 }
 .search-input::placeholder { color: var(--t3); }
+
+.status-page-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 13px;
+  color: var(--t2);
+  border: 1px solid var(--line2);
+  background: var(--s1);
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.status-page-link:hover {
+  color: var(--gold);
+  border-color: var(--gold);
+  background: var(--s2);
+}
 
 /* ── Layout ────────────────────────────────────────────────── */
 .layout {
@@ -993,6 +1139,20 @@ onMounted(async () => {
   border-left-color: var(--gold);
   font-weight: 600;
 }
+
+.status-filter-list { gap: 3px; }
+.status-filter-item { justify-content: flex-start; }
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line2);
+  flex-shrink: 0;
+}
+.status-dot--disposition { background: var(--up); }
+.status-dot--attention { background: var(--warn); }
+.status-dot--daytrade { background: var(--blue); }
+.status-dot--all { background: var(--t3); }
 
 .tag-row {
   display: flex;
@@ -1128,8 +1288,43 @@ onMounted(async () => {
 }
 .td-sym a:hover { color: var(--t1); }
 .td-name { color: var(--t2); max-width: 120px; }
+.td-status { min-width: 132px; }
 .td-price { font-weight: 600; }
 .td-vol { color: var(--t3); }
+
+.status-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line2);
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+.status-chip--disposition {
+  color: var(--up);
+  border-color: color-mix(in oklch, var(--up) 62%, var(--line));
+  background: color-mix(in oklch, var(--up) 10%, transparent);
+}
+.status-chip--attention {
+  color: var(--warn);
+  border-color: color-mix(in oklch, var(--warn) 62%, var(--line));
+  background: color-mix(in oklch, var(--warn) 10%, transparent);
+}
+.status-chip--daytrade {
+  color: var(--blue);
+  border-color: color-mix(in oklch, var(--blue) 62%, var(--line));
+  background: color-mix(in oklch, var(--blue) 10%, transparent);
+}
 
 .industry-pill {
   font-size: 12px;
@@ -1354,13 +1549,14 @@ onMounted(async () => {
 @media (max-width: 640px) {
   .header-date { display: none; }
   .toolbar__inner { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .toolbar__right { width: 100%; }
   .search-input { width: 100%; }
-  .stock-table th:nth-child(5),
-  .stock-table td:nth-child(5),
   .stock-table th:nth-child(6),
   .stock-table td:nth-child(6),
   .stock-table th:nth-child(7),
-  .stock-table td:nth-child(7) { display: none; }
+  .stock-table td:nth-child(7),
+  .stock-table th:nth-child(8),
+  .stock-table td:nth-child(8) { display: none; }
 }
 
 /* ── Classic structural overrides ───────────────────────────── */

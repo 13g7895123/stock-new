@@ -54,6 +54,12 @@ var scheduleTaskCatalog = []ScheduleTaskMeta{
 		Description: "爬取 TWSE/TPEX 每日外資、投信、自營商買賣超資料（可設定 days 參數）",
 		HasParams:   true,
 	},
+	{
+		ID:          "stock_status",
+		Label:       "處置注意股同步",
+		Description: "同步 TWSE/TPEX 處置股、注意股與限當沖標記至本地資料庫",
+		HasParams:   false,
+	},
 }
 
 // ─── Handler ─────────────────────────────────────────────────────────────────
@@ -287,6 +293,8 @@ func dispatchTask(db *gorm.DB, taskID, params string) error {
 			p.Days = 1
 		}
 		return TriggerInstitutionalCron(db, p.Days)
+	case "stock_status":
+		return TriggerStockStatusCron(db)
 	}
 	return fmt.Errorf("unknown task: %s", taskID)
 }

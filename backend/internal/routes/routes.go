@@ -43,6 +43,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 	winrateHandler := handlers.NewWinrateHandler(db)
 	technicalHandler := handlers.NewTechnicalHandler(db)
 	chipScoreHandler := handlers.NewChipScoreHandler(db)
+	stockStatusHandler := handlers.NewStockStatusHandler(db)
 
 	api := r.Group("/api")
 	{
@@ -72,6 +73,13 @@ func Setup(db *gorm.DB) *gin.Engine {
 
 		// 全市場日K價量
 		api.GET("/prices/previous-trading-days", priceHandler.MarketPreviousTradingDays)
+
+		stockStatuses := api.Group("/stock-statuses")
+		{
+			stockStatuses.GET("", stockStatusHandler.List)
+			stockStatuses.GET("/status", stockStatusHandler.Status)
+			stockStatuses.POST("/sync", stockStatusHandler.Sync)
+		}
 
 		// 產業列表
 		api.GET("/industries", tagHandler.ListIndustries)
