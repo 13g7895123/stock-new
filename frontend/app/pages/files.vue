@@ -77,6 +77,31 @@ function downloadUrl(file: UploadedFile) {
   return `/api/files/${file.id}/download`
 }
 
+function fullDownloadUrl(file: UploadedFile): string {
+  if (import.meta.client) {
+    return `${window.location.origin}/api/files/${file.id}/download`
+  }
+  return `/api/files/${file.id}/download`
+}
+
+const copyStates = ref<Record<number, boolean>>({})
+
+async function copyUrl(file: UploadedFile) {
+  const url = fullDownloadUrl(file)
+  try {
+    await navigator.clipboard.writeText(url)
+  } catch {
+    const el = document.createElement('textarea')
+    el.value = url
+    document.body.appendChild(el)
+    el.select()
+    document.execCommand('copy')
+    document.body.removeChild(el)
+  }
+  copyStates.value[file.id] = true
+  setTimeout(() => { copyStates.value[file.id] = false }, 2000)
+}
+
 async function deleteFile(file: UploadedFile) {
   if (!confirm(`確定要刪除「${file.original_name}」？`)) return
   try {
@@ -187,13 +212,25 @@ function fileTypeIcon(contentType: string): string {
           <tbody>
             <tr v-for="file in files" :key="file.id" class="file-row">
               <td class="col-name">
-                <span class="file-icon">{{ fileTypeIcon(file.content_type) }}</span>
-                <span class="file-name">{{ file.original_name }}</span>
+                <div class="file-name-row">
+                  <span class="file-icon">{{ fileTypeIcon(file.content_type) }}</span>
+                  <span class="file-name">{{ file.original_name }}</span>
+                </div>
+                <div class="file-url-row">
+                  <code class="url-text" :title="fullDownloadUrl(file)">{{ fullDownloadUrl(file) }}</code>
+                </div>
               </td>
               <td class="col-size">{{ formatSize(file.size) }}</td>
               <td class="col-date">{{ formatDate(file.uploaded_at) }}</td>
               <td class="col-actions">
                 <a :href="downloadUrl(file)" download class="btn-action btn-action--download">下載</a>
+                <button
+                  class="btn-action btn-action--copy"
+                  :class="{ 'btn-action--copied': copyStates[file.id] }"
+                  @click="copyUrl(file)"
+                >
+                  {{ copyStates[file.id] ? '✓ 已複製' : '複製連結' }}
+                </button>
                 <button class="btn-action btn-action--delete" @click="deleteFile(file)">刪除</button>
               </td>
             </tr>
@@ -378,9 +415,10 @@ function fileTypeIcon(contentType: string): string {
 .col-name { max-width: 360px; }
 .col-size { width: 90px; color: var(--t2); white-space: nowrap; }
 .col-date { width: 160px; color: var(--t2); white-space: nowrap; }
-.col-actions { width: 120px; text-align: right; white-space: nowrap; }
+.col-actions { width: 190px; text-align: right; white-space: nowrap; }
 
 .file-icon { margin-right: 8px; font-size: 1rem; }
+.file-name-row { display: flex; align-items: center; }
 .file-name {
   color: var(--t1);
   overflow: hidden;
@@ -389,6 +427,26 @@ function fileTypeIcon(contentType: string): string {
   max-width: 320px;
   display: inline-block;
   vertical-align: middle;
+}
+.file-url-row {
+  margin-top: 4px;
+  padding-left: 26px;
+}
+.url-text {
+  font-family: 'DM Mono', 'Fira Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--t3);
+  background: var(--s2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  user-select: all;
+  cursor: text;
 }
 
 .btn-action {
@@ -406,7 +464,17 @@ function fileTypeIcon(contentType: string): string {
 .btn-action--download {
   background: color-mix(in oklch, var(--blue) 20%, var(--s2));
   color: var(--blue);
-  margin-right: 6px;
+  margin-right: 4px;
+}
+.btn-action--copy {
+  background: color-mix(in oklch, var(--gold) 18%, var(--s2));
+  color: var(--gold);
+  margin-right: 4px;
+  min-width: 62px;
+}
+.btn-action--copied {
+  background: color-mix(in oklch, var(--up) 20%, var(--s2));
+  color: var(--up);
 }
 .btn-action--delete {
   background: color-mix(in oklch, var(--dn) 18%, var(--s2));
