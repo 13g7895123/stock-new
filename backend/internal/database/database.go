@@ -50,6 +50,7 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 		&models.BacktestJob{},
 		&models.BacktestTrade{},
 		&models.BacktestEquityPoint{},
+		&models.UploadedFile{},
 	); err != nil {
 		return nil, err
 	}

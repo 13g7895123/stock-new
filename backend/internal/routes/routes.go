@@ -44,6 +44,7 @@ func Setup(db *gorm.DB) *gin.Engine {
 	technicalHandler := handlers.NewTechnicalHandler(db)
 	chipScoreHandler := handlers.NewChipScoreHandler(db)
 	stockStatusHandler := handlers.NewStockStatusHandler(db)
+	fileHandler := handlers.NewFileHandler(db)
 
 	api := r.Group("/api")
 	{
@@ -229,6 +230,15 @@ func Setup(db *gorm.DB) *gin.Engine {
 			scheduleGroup.GET("", scheduleHandler.GetAll)
 			scheduleGroup.PUT("/:task_id", scheduleHandler.Update)
 			scheduleGroup.POST("/:task_id/run", scheduleHandler.ManualRun)
+		}
+
+		// 檔案暫存
+		filesGroup := api.Group("/files")
+		{
+			filesGroup.GET("", fileHandler.List)
+			filesGroup.POST("", fileHandler.Upload)
+			filesGroup.GET("/:id/download", fileHandler.Download)
+			filesGroup.DELETE("/:id", fileHandler.Delete)
 		}
 	}
 
