@@ -34,6 +34,9 @@ services:
       DB_PASS: ${DB_PASS:-postgres}
       DB_NAME: ${DB_NAME:-stockdb}
       SCRAPER_URL: http://scraper:5100
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads_data:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,3 +116,4 @@ networks:
 volumes:
   postgres_data:
   pgadmin_data:
+  uploads_data:
